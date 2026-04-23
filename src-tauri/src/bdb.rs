@@ -67,7 +67,6 @@ struct DetectedPlatform {
     operating_system: BdbOperatingSystem,
     architecture: BdbArchitecture,
     windows_build: Option<u32>,
-    probe_error: Option<String>,
 }
 
 /// Describes the current machine's compatibility with the maintained `bdb` support matrix.
@@ -178,10 +177,9 @@ fn build_guidance_for_unsupported_platform(
         BdbUnsupportedReason::UnsupportedOperatingSystemVersion => {
             "Board currently advertises its Windows bdb build for Windows 11. This machine did not pass the Windows 11 compatibility check.".into()
         }
-        BdbUnsupportedReason::PlatformProbeFailed => detected
-            .probe_error
-            .clone()
-            .unwrap_or_else(|| "The app could not confirm this machine's supported platform details.".into()),
+        BdbUnsupportedReason::PlatformProbeFailed => {
+            "BE Home could not confirm whether this Windows PC matches Board's current bdb support. Try again, and if this keeps happening, make sure Windows is fully up to date.".into()
+        }
         BdbUnsupportedReason::MissingManifestEntry => {
             "The maintained bdb source manifest is missing the Board-hosted URL for this supported platform key.".into()
         }
@@ -237,35 +235,27 @@ fn detect_current_platform() -> DetectedPlatform {
     };
 
     #[cfg(target_os = "windows")]
-    let (windows_build, probe_error) = match detect_windows_build_number() {
-        Ok(build) => (Some(build), None),
-        Err(error) => (None, Some(error)),
-    };
+    let windows_build = detect_windows_build_number();
 
     #[cfg(not(target_os = "windows"))]
-    let (windows_build, probe_error) = (None, None);
+    let windows_build = None;
 
     DetectedPlatform {
         operating_system,
         architecture,
         windows_build,
-        probe_error,
     }
 }
 
 #[cfg(target_os = "windows")]
-fn detect_windows_build_number() -> Result<u32, String> {
+fn detect_windows_build_number() -> Option<u32> {
     let output = Command::new("cmd")
         .args(["/C", "ver"])
         .output()
-        .map_err(|error| format!("The app could not run `cmd /C ver` to confirm whether this machine is Windows 11: {error}"))?;
+        .ok()?;
 
     let version_text = String::from_utf8_lossy(&output.stdout);
-    parse_windows_build_number(&version_text).ok_or_else(|| {
-        format!(
-            "The app could not parse the Windows version output needed for Board's Windows 11-only bdb support check: {version_text}"
-        )
-    })
+    parse_windows_build_number(&version_text)
 }
 
 fn parse_windows_build_number(version_text: &str) -> Option<u32> {
@@ -319,7 +309,6 @@ mod tests {
                 operating_system: BdbOperatingSystem::Macos,
                 architecture: BdbArchitecture::Aarch64,
                 windows_build: None,
-                probe_error: None,
             },
         );
 
@@ -340,7 +329,6 @@ mod tests {
                 operating_system: BdbOperatingSystem::Linux,
                 architecture: BdbArchitecture::Arm,
                 windows_build: None,
-                probe_error: None,
             },
         );
 
@@ -361,7 +349,6 @@ mod tests {
                 operating_system: BdbOperatingSystem::Windows,
                 architecture: BdbArchitecture::X86_64,
                 windows_build: Some(26100),
-                probe_error: None,
             },
         );
 
@@ -382,7 +369,6 @@ mod tests {
                 operating_system: BdbOperatingSystem::Windows,
                 architecture: BdbArchitecture::X86_64,
                 windows_build: Some(19045),
-                probe_error: None,
             },
         );
 
@@ -395,7 +381,7 @@ mod tests {
     }
 
     #[test]
-    fn windows_probe_failures_are_explicit() {
+    fn windows_probe_failures_use_player_friendly_guidance() {
         let manifest = bundled_manifest();
         let plan = resolve_bdb_source_plan_for_platform(
             &manifest,
@@ -403,7 +389,6 @@ mod tests {
                 operating_system: BdbOperatingSystem::Windows,
                 architecture: BdbArchitecture::X86_64,
                 windows_build: None,
-                probe_error: Some("version probe failed".into()),
             },
         );
 
@@ -412,7 +397,10 @@ mod tests {
             Some(BdbUnsupportedReason::PlatformProbeFailed),
             plan.support.reason
         );
-        assert_eq!("version probe failed", plan.support.guidance);
+        assert_eq!(
+            "BE Home could not confirm whether this Windows PC matches Board's current bdb support. Try again, and if this keeps happening, make sure Windows is fully up to date.",
+            plan.support.guidance
+        );
     }
 
     #[test]
