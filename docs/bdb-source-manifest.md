@@ -45,7 +45,15 @@ The maintained precedence for the later acquisition flow is:
 2. cached last-known-good manifest
 3. bundled fallback manifest from the app build
 
-This issue implements the bundled fallback and the maintained remote URL target. Cached manifest behavior lands in the later bootstrap/download work.
+The desktop host now implements this full precedence order at runtime. When the remote manifest refresh succeeds, the app saves that JSON as the last-known-good cached manifest for later offline or outage fallback.
+
+## Cache Location
+
+The cached manifest is stored in the app-owned cache directory beside the rest of the desktop utility state:
+
+- Windows: `%LocalAppData%/Board Enthusiasts/BE Home for Desktop/cache/bdb-source-manifest.json`
+- macOS: `~/Library/Application Support/Board Enthusiasts/BE Home for Desktop/cache/bdb-source-manifest.json`
+- Linux: `~/.local/share/Board Enthusiasts/BE Home for Desktop/cache/bdb-source-manifest.json`
 
 ## Emergency Update Procedure
 

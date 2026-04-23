@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  BdbAcquisitionResult,
   BdbSourcePlan,
+  BdbToolState,
   DesktopShellState,
   ManagedStorageOverridesInput,
   ManagedStorageSettings,
@@ -18,6 +20,20 @@ export function loadDesktopShellState(): Promise<DesktopShellState> {
  */
 export function loadBdbSourcePlan(): Promise<BdbSourcePlan> {
   return invoke<BdbSourcePlan>("load_bdb_source_plan");
+}
+
+/**
+ * Loads the current managed `bdb` tool state from the desktop host.
+ */
+export function loadBdbToolState(): Promise<BdbToolState> {
+  return invoke<BdbToolState>("load_bdb_tool_state");
+}
+
+/**
+ * Downloads or repairs the managed `bdb` binary, then returns the updated state.
+ */
+export function acquireBdbTool(repair = false): Promise<BdbAcquisitionResult> {
+  return invoke<BdbAcquisitionResult>("acquire_bdb_tool", { repair });
 }
 
 /**

@@ -94,9 +94,65 @@ export interface BdbDownloadSource {
 export interface BdbSourcePlan {
   manifestSource: string;
   remoteManifestUrl: string;
+  manifestCachePath: string | null;
   manifestSchemaVersion: number;
   support: BdbPlatformSupport;
   source: BdbDownloadSource | null;
+}
+
+/**
+ * Describes the local readiness state for the managed `bdb` binary.
+ */
+export type BdbToolStatus = "unsupported" | "missing" | "downloaded" | "runnable";
+
+/**
+ * Describes the runnable validation result for the managed `bdb` binary.
+ */
+export type BdbRunnableStatus = "unsupported" | "missing" | "blocked" | "runnable";
+
+/**
+ * Describes the latest no-device-required validation result for the managed `bdb` binary.
+ */
+export interface BdbRunnableValidation {
+  status: BdbRunnableStatus;
+  command: string;
+  exitCode: number | null;
+  summary: string;
+  detail: string | null;
+}
+
+/**
+ * Describes the current managed `bdb` tool state.
+ */
+export interface BdbToolState {
+  status: BdbToolStatus;
+  summary: string;
+  guidance: string;
+  executablePath: string;
+  executableExists: boolean;
+  storage: ManagedStorageLocation;
+  sourcePlan: BdbSourcePlan;
+  validation: BdbRunnableValidation;
+}
+
+/**
+ * Describes the outcome of an acquire or repair attempt for `bdb`.
+ */
+export type BdbAcquisitionOutcome =
+  | "unsupported"
+  | "alreadyReady"
+  | "downloaded"
+  | "repaired"
+  | "failed";
+
+/**
+ * Describes the result returned after BE Home attempts to acquire or repair `bdb`.
+ */
+export interface BdbAcquisitionResult {
+  outcome: BdbAcquisitionOutcome;
+  summary: string;
+  guidance: string;
+  toolState: BdbToolState;
 }
 
 /**

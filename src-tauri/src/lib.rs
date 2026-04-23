@@ -1,4 +1,5 @@
 mod bdb;
+mod bdb_tool;
 mod storage;
 
 use serde::Serialize;
@@ -189,6 +190,16 @@ fn load_bdb_source_plan() -> bdb::BdbSourcePlan {
 }
 
 #[tauri::command]
+fn load_bdb_tool_state() -> Result<bdb_tool::BdbToolState, String> {
+    bdb_tool::load_current_bdb_tool_state()
+}
+
+#[tauri::command]
+fn acquire_bdb_tool(repair: bool) -> Result<bdb_tool::BdbAcquisitionResult, String> {
+    bdb_tool::acquire_current_bdb_tool(repair)
+}
+
+#[tauri::command]
 fn load_managed_storage_settings() -> Result<storage::ManagedStorageSettings, String> {
     storage::load_managed_storage_settings()
 }
@@ -207,6 +218,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_shell_state,
             load_bdb_source_plan,
+            load_bdb_tool_state,
+            acquire_bdb_tool,
             load_managed_storage_settings,
             save_managed_storage_settings
         ])
@@ -287,8 +300,16 @@ mod tests {
         let plan = super::load_bdb_source_plan();
         let serialized = serde_json::to_value(plan).expect("bdb source plan should serialize");
 
-        assert_eq!(Some("bundled"), serialized.get("manifestSource").and_then(|value| value.as_str()));
-        assert_eq!(Some(1), serialized.get("manifestSchemaVersion").and_then(|value| value.as_u64()));
+        assert!(serialized
+            .get("manifestSource")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| matches!(value, "bundled" | "cached" | "remote")));
+        assert_eq!(
+            Some(1),
+            serialized
+                .get("manifestSchemaVersion")
+                .and_then(|value| value.as_u64())
+        );
         assert!(serialized
             .get("remoteManifestUrl")
             .and_then(|value| value.as_str())
@@ -309,6 +330,20 @@ mod tests {
         assert!(serialized
             .get("apkLibrary")
             .and_then(|value| value.get("effectivePath"))
+            .is_some());
+    }
+
+    #[test]
+    fn bdb_tool_state_serializes_the_host_side_status_contract() {
+        let state = super::load_bdb_tool_state().expect("bdb tool state should load");
+        let serialized = serde_json::to_value(state).expect("bdb tool state should serialize");
+
+        assert!(serialized.get("status").is_some());
+        assert!(serialized.get("storage").is_some());
+        assert!(serialized.get("sourcePlan").is_some());
+        assert!(serialized
+            .get("validation")
+            .and_then(|value| value.get("status"))
             .is_some());
     }
 }

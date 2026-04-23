@@ -32,20 +32,20 @@ pub(crate) enum ManagedStoragePathSource {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ManagedStorageLocation {
-    default_path: String,
-    override_path: Option<String>,
-    effective_path: String,
-    source: ManagedStoragePathSource,
+    pub(crate) default_path: String,
+    pub(crate) override_path: Option<String>,
+    pub(crate) effective_path: String,
+    pub(crate) source: ManagedStoragePathSource,
 }
 
 /// Describes the current managed storage configuration for the desktop app.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ManagedStorageSettings {
-    operating_system: StorageOperatingSystem,
-    settings_file_path: String,
-    bdb_tools: ManagedStorageLocation,
-    apk_library: ManagedStorageLocation,
+    pub(crate) operating_system: StorageOperatingSystem,
+    pub(crate) settings_file_path: String,
+    pub(crate) bdb_tools: ManagedStorageLocation,
+    pub(crate) apk_library: ManagedStorageLocation,
 }
 
 /// Represents the persisted override payload accepted by the desktop host.
@@ -77,6 +77,11 @@ pub(crate) fn load_managed_storage_settings() -> Result<ManagedStorageSettings, 
     Ok(build_managed_storage_settings(&context, &persisted))
 }
 
+/// Resolve the app-owned root directory used for desktop settings, tools, and cached files.
+pub(crate) fn resolve_app_data_root() -> Result<PathBuf, String> {
+    Ok(current_storage_context()?.app_data_root)
+}
+
 /// Save managed storage overrides and return the updated effective settings.
 pub(crate) fn save_managed_storage_settings(
     input: ManagedStorageOverridesInput,
@@ -101,7 +106,10 @@ fn build_managed_storage_settings(
     ManagedStorageSettings {
         operating_system: context.operating_system,
         settings_file_path: path_to_string(&context.settings_file_path),
-        bdb_tools: build_location(default_bdb_tools_path, persisted.bdb_tools_override.as_deref()),
+        bdb_tools: build_location(
+            default_bdb_tools_path,
+            persisted.bdb_tools_override.as_deref(),
+        ),
         apk_library: build_location(
             default_apk_library_path,
             persisted.apk_library_override.as_deref(),
@@ -159,7 +167,9 @@ fn current_storage_context_from_environment(
             .join(APP_PRODUCT_DIRECTORY);
         return Ok(ManagedStorageContext {
             operating_system: StorageOperatingSystem::Macos,
-            settings_file_path: root.join(SETTINGS_DIRECTORY).join(STORAGE_SETTINGS_FILE_NAME),
+            settings_file_path: root
+                .join(SETTINGS_DIRECTORY)
+                .join(STORAGE_SETTINGS_FILE_NAME),
             app_data_root: root,
         });
     }
@@ -171,7 +181,9 @@ fn current_storage_context_from_environment(
         .join(APP_PRODUCT_DIRECTORY);
     Ok(ManagedStorageContext {
         operating_system: StorageOperatingSystem::Linux,
-        settings_file_path: root.join(SETTINGS_DIRECTORY).join(STORAGE_SETTINGS_FILE_NAME),
+        settings_file_path: root
+            .join(SETTINGS_DIRECTORY)
+            .join(STORAGE_SETTINGS_FILE_NAME),
         app_data_root: root,
     })
 }
@@ -385,7 +397,10 @@ mod tests {
             .expect("settings file should load");
         let settings = build_managed_storage_settings(&context, &loaded);
 
-        assert_eq!(Some("/tmp/be/tools"), settings.bdb_tools.override_path.as_deref());
+        assert_eq!(
+            Some("/tmp/be/tools"),
+            settings.bdb_tools.override_path.as_deref()
+        );
         assert_eq!("/tmp/be/tools", settings.bdb_tools.effective_path);
         assert_eq!(
             Some("/tmp/be/apk-library"),
