@@ -1,7 +1,12 @@
+use crate::storage;
+use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 #[cfg(target_os = "windows")]
 use std::process::Command;
+use std::time::Duration;
 
 const REMOTE_BDB_SOURCE_MANIFEST_URL: &str =
     "https://raw.githubusercontent.com/board-enthusiasts/be-home-for-desktop/main/config/bdb-sources.json";
@@ -10,6 +15,9 @@ const LINUX_X86_64_PLATFORM_KEY: &str = "linux-x86_64";
 const MACOS_UNIVERSAL_PLATFORM_KEY: &str = "macos-universal";
 const WINDOWS_X86_64_PLATFORM_KEY: &str = "windows-x86_64";
 const WINDOWS_11_MINIMUM_BUILD: u32 = 22000;
+const MANIFEST_CACHE_DIRECTORY: &str = "cache";
+const MANIFEST_CACHE_FILE_NAME: &str = "bdb-source-manifest.json";
+const REMOTE_MANIFEST_TIMEOUT_SECONDS: u64 = 10;
 
 /// Describes the supported source-map status for the current machine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -63,6 +71,13 @@ struct BdbSourceManifest {
 }
 
 #[derive(Clone, Debug)]
+struct LoadedManifest {
+    manifest: BdbSourceManifest,
+    source: &'static str,
+    cache_path: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug)]
 struct DetectedPlatform {
     operating_system: BdbOperatingSystem,
     architecture: BdbArchitecture,
@@ -73,46 +88,71 @@ struct DetectedPlatform {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BdbPlatformSupport {
-    status: BdbSupportStatus,
-    operating_system: BdbOperatingSystem,
-    architecture: BdbArchitecture,
-    windows_build: Option<u32>,
-    platform_key: Option<String>,
-    reason: Option<BdbUnsupportedReason>,
-    guidance: String,
+    pub(crate) status: BdbSupportStatus,
+    pub(crate) operating_system: BdbOperatingSystem,
+    pub(crate) architecture: BdbArchitecture,
+    pub(crate) windows_build: Option<u32>,
+    pub(crate) platform_key: Option<String>,
+    pub(crate) reason: Option<BdbUnsupportedReason>,
+    pub(crate) guidance: String,
 }
 
 /// Describes the Board-hosted `bdb` source chosen for the current machine.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BdbDownloadSource {
-    platform_key: String,
-    download_url: String,
+    pub(crate) platform_key: String,
+    pub(crate) download_url: String,
 }
 
 /// Describes the maintained source-resolution plan for `bdb` on the current machine.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BdbSourcePlan {
-    manifest_source: String,
-    remote_manifest_url: String,
-    manifest_schema_version: u32,
-    support: BdbPlatformSupport,
-    source: Option<BdbDownloadSource>,
+    pub(crate) manifest_source: String,
+    pub(crate) remote_manifest_url: String,
+    pub(crate) manifest_cache_path: Option<String>,
+    pub(crate) manifest_schema_version: u32,
+    pub(crate) support: BdbPlatformSupport,
+    pub(crate) source: Option<BdbDownloadSource>,
 }
 
-/// Resolve the bundled `bdb` source plan for the current machine.
+/// Resolve the maintained `bdb` source plan for the current machine.
 pub(crate) fn resolve_current_bdb_source_plan() -> BdbSourcePlan {
-    let manifest = bundled_manifest();
-    resolve_bdb_source_plan_for_platform(&manifest, detect_current_platform())
+    resolve_current_bdb_source_plan_with_remote_refresh(false)
+}
+
+/// Resolve the maintained `bdb` source plan and refresh its remote manifest when appropriate.
+pub(crate) fn refresh_current_bdb_source_plan() -> BdbSourcePlan {
+    resolve_current_bdb_source_plan_with_remote_refresh(true)
+}
+
+fn resolve_current_bdb_source_plan_with_remote_refresh(
+    allow_remote_manifest_refresh: bool,
+) -> BdbSourcePlan {
+    let detected = detect_current_platform();
+    let cache_path = resolve_manifest_cache_path();
+    let manifest = load_manifest_with_fallbacks(
+        cache_path.as_deref(),
+        allow_remote_manifest_refresh,
+        fetch_remote_manifest_text,
+    );
+    resolve_bdb_source_plan_for_platform(&manifest, detected)
+}
+
+fn resolve_manifest_cache_path() -> Option<PathBuf> {
+    storage::resolve_app_data_root().ok().map(|root| {
+        root.join(MANIFEST_CACHE_DIRECTORY)
+            .join(MANIFEST_CACHE_FILE_NAME)
+    })
 }
 
 fn resolve_bdb_source_plan_for_platform(
-    manifest: &BdbSourceManifest,
+    loaded_manifest: &LoadedManifest,
     detected: DetectedPlatform,
 ) -> BdbSourcePlan {
     let support = match resolve_supported_platform_key(&detected) {
-        Ok(platform_key) => match manifest.platforms.get(platform_key) {
+        Ok(platform_key) => match loaded_manifest.manifest.platforms.get(platform_key) {
             Some(_) => BdbPlatformSupport {
                 status: BdbSupportStatus::Supported,
                 operating_system: detected.operating_system,
@@ -143,20 +183,22 @@ fn resolve_bdb_source_plan_for_platform(
         },
     };
 
-    let source = support
-        .platform_key
-        .as_ref()
-        .and_then(|platform_key| manifest.platforms.get(platform_key).map(|download_url| {
-            BdbDownloadSource {
+    let source = support.platform_key.as_ref().and_then(|platform_key| {
+        loaded_manifest
+            .manifest
+            .platforms
+            .get(platform_key)
+            .map(|download_url| BdbDownloadSource {
                 platform_key: platform_key.clone(),
                 download_url: download_url.clone(),
-            }
-        }));
+            })
+    });
 
     BdbSourcePlan {
-        manifest_source: "bundled".into(),
+        manifest_source: loaded_manifest.source.into(),
         remote_manifest_url: REMOTE_BDB_SOURCE_MANIFEST_URL.into(),
-        manifest_schema_version: manifest.schema_version,
+        manifest_cache_path: loaded_manifest.cache_path.as_deref().map(path_to_string),
+        manifest_schema_version: loaded_manifest.manifest.schema_version,
         support,
         source,
     }
@@ -168,7 +210,8 @@ fn build_guidance_for_unsupported_platform(
 ) -> String {
     match reason {
         BdbUnsupportedReason::UnsupportedOperatingSystem => {
-            "Board currently publishes bdb only for macOS, Linux amd64, and Windows 11 x86_64.".into()
+            "Board currently publishes bdb only for macOS, Linux amd64, and Windows 11 x86_64."
+                .into()
         }
         BdbUnsupportedReason::UnsupportedArchitecture => format!(
             "Board currently publishes bdb only for macOS universal, Linux x86_64, and Windows 11 x86_64. This machine reported architecture {:?}.",
@@ -210,8 +253,117 @@ fn resolve_supported_platform_key(
     }
 }
 
+fn load_manifest_with_fallbacks<F>(
+    cache_path: Option<&Path>,
+    allow_remote_manifest_refresh: bool,
+    fetch_remote_manifest: F,
+) -> LoadedManifest
+where
+    F: Fn(&str) -> Result<String, String>,
+{
+    let cached_manifest = cache_path.and_then(|cache_path| {
+        load_cached_manifest(cache_path)
+            .ok()
+            .map(|manifest| LoadedManifest {
+                manifest,
+                source: "cached",
+                cache_path: Some(cache_path.to_path_buf()),
+            })
+    });
+
+    if allow_remote_manifest_refresh {
+        if let Ok(remote_text) = fetch_remote_manifest(REMOTE_BDB_SOURCE_MANIFEST_URL) {
+            if let Ok(manifest) = parse_manifest(&remote_text) {
+                if let Some(cache_path) = cache_path {
+                    let _ = save_cached_manifest(cache_path, &remote_text);
+                }
+
+                return LoadedManifest {
+                    manifest,
+                    source: "remote",
+                    cache_path: cache_path.map(|path| path.to_path_buf()),
+                };
+            }
+        }
+    } else if let Some(cached_manifest) = cached_manifest.clone() {
+        return cached_manifest;
+    }
+
+    if let Some(cached_manifest) = cached_manifest {
+        return cached_manifest;
+    }
+
+    LoadedManifest {
+        manifest: bundled_manifest(),
+        source: "bundled",
+        cache_path: cache_path.map(|path| path.to_path_buf()),
+    }
+}
+
+fn fetch_remote_manifest_text(url: &str) -> Result<String, String> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(REMOTE_MANIFEST_TIMEOUT_SECONDS))
+        .build()
+        .map_err(|error| format!("The app could not prepare its bdb manifest client: {error}"))?;
+    let response = client
+        .get(url)
+        .send()
+        .map_err(|error| format!("The app could not refresh the remote bdb manifest: {error}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!(
+            "The remote bdb manifest responded with HTTP status {status}."
+        ));
+    }
+
+    response
+        .text()
+        .map_err(|error| format!("The app could not read the remote bdb manifest body: {error}"))
+}
+
+fn load_cached_manifest(cache_path: &Path) -> Result<BdbSourceManifest, String> {
+    let content = fs::read_to_string(cache_path).map_err(|error| {
+        format!(
+            "The app could not read the cached bdb manifest at `{}`: {error}",
+            cache_path.display()
+        )
+    })?;
+    parse_manifest(&content)
+}
+
+fn save_cached_manifest(cache_path: &Path, manifest_text: &str) -> Result<(), String> {
+    if let Some(parent) = cache_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "The app could not create the cached bdb manifest directory at `{}`: {error}",
+                parent.display()
+            )
+        })?;
+    }
+
+    fs::write(cache_path, manifest_text).map_err(|error| {
+        format!(
+            "The app could not save the cached bdb manifest at `{}`: {error}",
+            cache_path.display()
+        )
+    })
+}
+
+fn parse_manifest(manifest_text: &str) -> Result<BdbSourceManifest, String> {
+    let manifest: BdbSourceManifest = serde_json::from_str(manifest_text)
+        .map_err(|error| format!("The bdb manifest JSON was invalid: {error}"))?;
+    if manifest.schema_version != 1 {
+        return Err(format!(
+            "The bdb manifest used unsupported schema version {}.",
+            manifest.schema_version
+        ));
+    }
+
+    Ok(manifest)
+}
+
 fn bundled_manifest() -> BdbSourceManifest {
-    serde_json::from_str(BUNDLED_BDB_SOURCE_MANIFEST_JSON)
+    parse_manifest(BUNDLED_BDB_SOURCE_MANIFEST_JSON)
         .expect("bundled bdb source manifest should deserialize")
 }
 
@@ -272,14 +424,20 @@ fn parse_windows_build_number(version_text: &str) -> Option<u32> {
     }
 }
 
+fn path_to_string(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        bundled_manifest, parse_windows_build_number, resolve_bdb_source_plan_for_platform,
-        BdbArchitecture, BdbOperatingSystem, BdbSupportStatus, BdbUnsupportedReason,
-        DetectedPlatform, LINUX_X86_64_PLATFORM_KEY, MACOS_UNIVERSAL_PLATFORM_KEY,
-        WINDOWS_X86_64_PLATFORM_KEY,
+        bundled_manifest, load_manifest_with_fallbacks, parse_manifest, parse_windows_build_number,
+        resolve_bdb_source_plan_for_platform, BdbArchitecture, BdbOperatingSystem,
+        BdbSupportStatus, BdbUnsupportedReason, DetectedPlatform, LoadedManifest,
+        LINUX_X86_64_PLATFORM_KEY, MACOS_UNIVERSAL_PLATFORM_KEY, WINDOWS_X86_64_PLATFORM_KEY,
     };
+    use std::cell::Cell;
+    use std::fs;
 
     #[test]
     fn bundled_manifest_tracks_current_board_download_urls() {
@@ -301,10 +459,126 @@ mod tests {
     }
 
     #[test]
+    fn remote_manifest_is_preferred_and_cached_when_it_is_valid() {
+        let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let cache_path = temp_directory
+            .path()
+            .join("cache")
+            .join("bdb-source-manifest.json");
+
+        let loaded = load_manifest_with_fallbacks(Some(&cache_path), true, |_| {
+            Ok(
+                r#"{"schemaVersion":1,"platforms":{"linux-x86_64":"https://example.com/linux/bdb"}}"#
+                    .into(),
+            )
+        });
+
+        assert_eq!("remote", loaded.source);
+        assert_eq!(
+            Some(&"https://example.com/linux/bdb".to_string()),
+            loaded.manifest.platforms.get(LINUX_X86_64_PLATFORM_KEY)
+        );
+        assert!(fs::read_to_string(cache_path)
+            .expect("cache file should be written")
+            .contains("example.com/linux/bdb"));
+    }
+
+    #[test]
+    fn cached_manifest_is_used_when_the_remote_refresh_is_invalid() {
+        let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let cache_path = temp_directory
+            .path()
+            .join("cache")
+            .join("bdb-source-manifest.json");
+        fs::create_dir_all(
+            cache_path
+                .parent()
+                .expect("cache directory should have parent"),
+        )
+        .expect("cache directory should exist");
+        fs::write(
+            &cache_path,
+            r#"{"schemaVersion":1,"platforms":{"linux-x86_64":"https://cached.example/bdb"}}"#,
+        )
+        .expect("cache manifest should be written");
+
+        let loaded =
+            load_manifest_with_fallbacks(Some(&cache_path), true, |_| Ok("{ invalid json".into()));
+
+        assert_eq!("cached", loaded.source);
+        assert_eq!(
+            Some(&"https://cached.example/bdb".to_string()),
+            loaded.manifest.platforms.get(LINUX_X86_64_PLATFORM_KEY)
+        );
+    }
+
+    #[test]
+    fn cached_manifest_is_used_without_remote_refreshing_on_state_reads() {
+        let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let cache_path = temp_directory
+            .path()
+            .join("cache")
+            .join("bdb-source-manifest.json");
+        let remote_fetch_attempted = Cell::new(false);
+        fs::create_dir_all(
+            cache_path
+                .parent()
+                .expect("cache directory should have parent"),
+        )
+        .expect("cache directory should exist");
+        fs::write(
+            &cache_path,
+            r#"{"schemaVersion":1,"platforms":{"linux-x86_64":"https://cached.example/bdb"}}"#,
+        )
+        .expect("cache manifest should be written");
+
+        let loaded = load_manifest_with_fallbacks(Some(&cache_path), false, |_| {
+            remote_fetch_attempted.set(true);
+            Err("offline".into())
+        });
+
+        assert_eq!("cached", loaded.source);
+        assert!(!remote_fetch_attempted.get());
+        assert_eq!(
+            Some(&"https://cached.example/bdb".to_string()),
+            loaded.manifest.platforms.get(LINUX_X86_64_PLATFORM_KEY)
+        );
+    }
+
+    #[test]
+    fn bundled_manifest_is_used_when_remote_and_cache_are_unavailable() {
+        let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let cache_path = temp_directory
+            .path()
+            .join("cache")
+            .join("bdb-source-manifest.json");
+
+        let loaded =
+            load_manifest_with_fallbacks(Some(&cache_path), true, |_| Err("offline".into()));
+
+        assert_eq!("bundled", loaded.source);
+        assert_eq!(
+            Some(&"https://dev.board.fun/downloads/bdb/linux/bdb".to_string()),
+            loaded.manifest.platforms.get(LINUX_X86_64_PLATFORM_KEY)
+        );
+    }
+
+    #[test]
+    fn manifest_parser_rejects_unknown_schema_versions() {
+        let result = parse_manifest(r#"{"schemaVersion":2,"platforms":{}}"#);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn macos_apple_silicon_maps_to_universal_download() {
-        let manifest = bundled_manifest();
+        let loaded_manifest = LoadedManifest {
+            manifest: bundled_manifest(),
+            source: "bundled",
+            cache_path: None,
+        };
         let plan = resolve_bdb_source_plan_for_platform(
-            &manifest,
+            &loaded_manifest,
             DetectedPlatform {
                 operating_system: BdbOperatingSystem::Macos,
                 architecture: BdbArchitecture::Aarch64,
@@ -313,18 +587,27 @@ mod tests {
         );
 
         assert_eq!(BdbSupportStatus::Supported, plan.support.status);
-        assert_eq!(Some(MACOS_UNIVERSAL_PLATFORM_KEY), plan.support.platform_key.as_deref());
+        assert_eq!(
+            Some(MACOS_UNIVERSAL_PLATFORM_KEY),
+            plan.support.platform_key.as_deref()
+        );
         assert_eq!(
             Some("https://dev.board.fun/downloads/bdb/macos-universal/bdb"),
-            plan.source.as_ref().map(|source| source.download_url.as_str())
+            plan.source
+                .as_ref()
+                .map(|source| source.download_url.as_str())
         );
     }
 
     #[test]
     fn linux_arm_is_reported_as_unsupported_architecture() {
-        let manifest = bundled_manifest();
+        let loaded_manifest = LoadedManifest {
+            manifest: bundled_manifest(),
+            source: "bundled",
+            cache_path: None,
+        };
         let plan = resolve_bdb_source_plan_for_platform(
-            &manifest,
+            &loaded_manifest,
             DetectedPlatform {
                 operating_system: BdbOperatingSystem::Linux,
                 architecture: BdbArchitecture::Arm,
@@ -342,9 +625,13 @@ mod tests {
 
     #[test]
     fn windows_11_x86_64_maps_to_board_windows_download() {
-        let manifest = bundled_manifest();
+        let loaded_manifest = LoadedManifest {
+            manifest: bundled_manifest(),
+            source: "bundled",
+            cache_path: None,
+        };
         let plan = resolve_bdb_source_plan_for_platform(
-            &manifest,
+            &loaded_manifest,
             DetectedPlatform {
                 operating_system: BdbOperatingSystem::Windows,
                 architecture: BdbArchitecture::X86_64,
@@ -353,18 +640,27 @@ mod tests {
         );
 
         assert_eq!(BdbSupportStatus::Supported, plan.support.status);
-        assert_eq!(Some(WINDOWS_X86_64_PLATFORM_KEY), plan.support.platform_key.as_deref());
+        assert_eq!(
+            Some(WINDOWS_X86_64_PLATFORM_KEY),
+            plan.support.platform_key.as_deref()
+        );
         assert_eq!(
             Some("https://dev.board.fun/downloads/bdb/windows/bdb.exe"),
-            plan.source.as_ref().map(|source| source.download_url.as_str())
+            plan.source
+                .as_ref()
+                .map(|source| source.download_url.as_str())
         );
     }
 
     #[test]
     fn windows_10_is_rejected_by_the_windows_11_requirement() {
-        let manifest = bundled_manifest();
+        let loaded_manifest = LoadedManifest {
+            manifest: bundled_manifest(),
+            source: "bundled",
+            cache_path: None,
+        };
         let plan = resolve_bdb_source_plan_for_platform(
-            &manifest,
+            &loaded_manifest,
             DetectedPlatform {
                 operating_system: BdbOperatingSystem::Windows,
                 architecture: BdbArchitecture::X86_64,
@@ -382,9 +678,13 @@ mod tests {
 
     #[test]
     fn windows_probe_failures_use_player_friendly_guidance() {
-        let manifest = bundled_manifest();
+        let loaded_manifest = LoadedManifest {
+            manifest: bundled_manifest(),
+            source: "bundled",
+            cache_path: None,
+        };
         let plan = resolve_bdb_source_plan_for_platform(
-            &manifest,
+            &loaded_manifest,
             DetectedPlatform {
                 operating_system: BdbOperatingSystem::Windows,
                 architecture: BdbArchitecture::X86_64,
@@ -405,8 +705,7 @@ mod tests {
 
     #[test]
     fn windows_build_parser_extracts_the_build_number() {
-        let build_number =
-            parse_windows_build_number("Microsoft Windows [Version 10.0.26100.1]");
+        let build_number = parse_windows_build_number("Microsoft Windows [Version 10.0.26100.1]");
 
         assert_eq!(Some(26100), build_number);
     }
