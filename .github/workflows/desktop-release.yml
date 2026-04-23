@@ -114,6 +114,14 @@ EOF
               ;;
           esac
 
+      - name: Verify platform bundle output exists
+        shell: bash
+        run: |
+          if ! compgen -G "${{ matrix.artifact_glob }}" > /dev/null; then
+            echo "Expected release bundle matching '${{ matrix.artifact_glob }}' but none was produced." >&2
+            exit 1
+          fi
+
       - name: Upload platform bundle artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -139,11 +147,20 @@ EOF
       - name: Generate SHA-256 checksums
         shell: bash
         run: |
-          find release-artifacts -type f \
-            \( -name '*.AppImage' -o -name '*.dmg' -o -name '*-setup.exe' \) \
-            -print0 \
-            | sort -z \
-            | xargs -0 sha256sum > release-artifacts/SHA256SUMS
+          mapfile -d '' bundle_files < <(
+            find release-artifacts -type f \
+              \( -name '*.AppImage' -o -name '*.dmg' -o -name '*-setup.exe' \) \
+              -print0 \
+              | sort -z
+          )
+
+          if [ "${#bundle_files[@]}" -eq 0 ]; then
+            echo "No installer artifacts were downloaded for checksum generation." >&2
+            exit 1
+          fi
+
+          printf '%s\0' "${bundle_files[@]}" \
+            | xargs -0 -r sha256sum > release-artifacts/SHA256SUMS
 
       - name: Upload checksum artifact
         uses: actions/upload-artifact@v4

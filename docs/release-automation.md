@@ -29,6 +29,8 @@ Each workflow run produces:
 - one `SIGNING-STATUS.txt` note per platform bundle
 - one aggregated `SHA256SUMS` file generated from the NSIS, DMG, and AppImage outputs
 
+The workflow now fails the platform job if the expected installer glob does not match a produced bundle, and it also fails checksum generation if no installer artifacts were downloaded. That keeps placeholder signing notes from masking a missing bundle and prevents publishing a misleading checksum file for an empty artifact set.
+
 When the workflow runs from a pushed tag, it also uploads those files to the GitHub release for that tag.
 
 ## Signing Placeholder Behavior
