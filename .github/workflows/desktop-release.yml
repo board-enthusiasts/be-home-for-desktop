@@ -1,0 +1,198 @@
+name: Desktop Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Bundle (${{ matrix.platform_label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform_label: linux-appimage
+            bundle_target: appimage
+            artifact_glob: src-tauri/target/release/bundle/appimage/*.AppImage
+          - os: macos-15
+            platform_label: macos-dmg
+            bundle_target: dmg
+            artifact_glob: src-tauri/target/release/bundle/dmg/*.dmg
+          - os: windows-2025
+            platform_label: windows-nsis
+            bundle_target: nsis
+            artifact_glob: src-tauri/target/release/bundle/nsis/*-setup.exe
+
+    env:
+      WINDOWS_SIGNING_READY: ${{ secrets.AZURE_CLIENT_ID != '' && secrets.AZURE_CLIENT_SECRET != '' && secrets.AZURE_TENANT_ID != '' && vars.WINDOWS_TRUSTED_SIGNING_ENDPOINT != '' && vars.WINDOWS_TRUSTED_SIGNING_ACCOUNT != '' && vars.WINDOWS_TRUSTED_SIGNING_PROFILE != '' }}
+      MACOS_SIGNING_READY: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.KEYCHAIN_PASSWORD != '' && secrets.APPLE_API_ISSUER != '' && secrets.APPLE_API_KEY != '' && secrets.APPLE_API_PRIVATE_KEY != '' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build outputs
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build explicit release bundle
+        run: npm run tauri build -- --bundles ${{ matrix.bundle_target }}
+
+      - name: Write signing status note
+        shell: bash
+        run: |
+          mkdir -p release-status
+
+          case "${RUNNER_OS}" in
+            Windows)
+              if [ "${WINDOWS_SIGNING_READY}" = "true" ]; then
+                cat <<'EOF' > "release-status/${{ matrix.platform_label }}-SIGNING-STATUS.txt"
+Windows signing credentials appear to be configured, but this Epic 1 workflow still treats live signing as a staged follow-up step.
+The produced NSIS artifact should be treated as an unsigned release placeholder until the signing command is wired in.
+EOF
+              else
+                cat <<'EOF' > "release-status/${{ matrix.platform_label }}-SIGNING-STATUS.txt"
+Windows signing credentials are not configured in this repository yet.
+The produced NSIS artifact is intentionally an unsigned placeholder so the release workflow can be exercised before the signing material exists.
+EOF
+              fi
+              ;;
+            macOS)
+              if [ "${MACOS_SIGNING_READY}" = "true" ]; then
+                cat <<'EOF' > "release-status/${{ matrix.platform_label }}-SIGNING-STATUS.txt"
+macOS signing credentials appear to be configured, but this Epic 1 workflow still treats live signing and notarization as staged follow-up steps.
+The produced DMG should be treated as an unsigned or non-notarized release placeholder until certificate import and notarization wiring are added.
+EOF
+              else
+                cat <<'EOF' > "release-status/${{ matrix.platform_label }}-SIGNING-STATUS.txt"
+macOS signing and notarization credentials are not configured in this repository yet.
+The produced DMG is intentionally a placeholder artifact so the release workflow can be exercised before the signing material exists.
+EOF
+              fi
+              ;;
+            Linux)
+              cat <<'EOF' > "release-status/${{ matrix.platform_label }}-SIGNING-STATUS.txt"
+Linux release output currently uses the checksum-first policy documented in docs/release-signing.md.
+No detached Linux signing key is configured in Epic 1, so the published AppImage should be paired with the generated SHA256SUMS file.
+EOF
+              ;;
+          esac
+
+      - name: Verify platform bundle output exists
+        shell: bash
+        run: |
+          if ! compgen -G "${{ matrix.artifact_glob }}" > /dev/null; then
+            echo "Expected release bundle matching '${{ matrix.artifact_glob }}' but none was produced." >&2
+            exit 1
+          fi
+
+      - name: Upload platform bundle artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-release-${{ matrix.platform_label }}
+          path: |
+            ${{ matrix.artifact_glob }}
+            release-status/${{ matrix.platform_label }}-SIGNING-STATUS.txt
+          if-no-files-found: error
+
+  checksums:
+    name: Generate Checksums
+    needs: build-release
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Download bundled artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-release-*
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Generate SHA-256 checksums
+        shell: bash
+        run: |
+          mapfile -d '' bundle_files < <(
+            find release-artifacts -type f \
+              \( -name '*.AppImage' -o -name '*.dmg' -o -name '*-setup.exe' \) \
+              -print0 \
+              | sort -z
+          )
+
+          if [ "${#bundle_files[@]}" -eq 0 ]; then
+            echo "No installer artifacts were downloaded for checksum generation." >&2
+            exit 1
+          fi
+
+          printf '%s\0' "${bundle_files[@]}" \
+            | xargs -0 -r sha256sum > release-artifacts/SHA256SUMS
+
+      - name: Upload checksum artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-release-checksums
+          path: release-artifacts/SHA256SUMS
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs: checksums
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish tagged release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            Initial desktop release workflow output for BE Home for Desktop.
+
+            This Epic 1 workflow publishes explicit NSIS, DMG, and AppImage bundles plus SHA-256 checksums.
+            Attached `SIGNING-STATUS.txt` notes describe whether each platform is still using placeholder unsigned output.
+          files: |
+            release-assets/**/*

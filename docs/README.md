@@ -10,5 +10,6 @@ This directory is reserved for maintained developer-facing documentation for `be
 - [`bdb-tool-lifecycle.md`](bdb-tool-lifecycle.md): managed `bdb` download, repair, and runnable-validation contract
 - [`managed-storage.md`](managed-storage.md): default app-owned storage paths and persisted override model
 - [`release-signing.md`](release-signing.md): platform signing, notarization, checksum, and release-secret requirements
+- [`release-automation.md`](release-automation.md): current release workflow triggers, explicit bundle targets, and signing placeholders
 
 Use [`planning/`](../planning/README.md) for active MVP planning and delivery breakdowns.
