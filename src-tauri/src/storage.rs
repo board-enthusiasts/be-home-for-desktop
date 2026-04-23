@@ -102,28 +102,24 @@ fn build_managed_storage_settings(
 ) -> ManagedStorageSettings {
     let default_bdb_tools_path = context.app_data_root.join(TOOLS_DIRECTORY);
     let default_apk_library_path = context.app_data_root.join(APK_LIBRARY_DIRECTORY);
+    let bdb_tools_override = normalize_loaded_override(persisted.bdb_tools_override.as_deref());
+    let apk_library_override = normalize_loaded_override(persisted.apk_library_override.as_deref());
 
     ManagedStorageSettings {
         operating_system: context.operating_system,
         settings_file_path: path_to_string(&context.settings_file_path),
-        bdb_tools: build_location(
-            default_bdb_tools_path,
-            persisted.bdb_tools_override.as_deref(),
-        ),
-        apk_library: build_location(
-            default_apk_library_path,
-            persisted.apk_library_override.as_deref(),
-        ),
+        bdb_tools: build_location(default_bdb_tools_path, bdb_tools_override),
+        apk_library: build_location(default_apk_library_path, apk_library_override),
     }
 }
 
-fn build_location(default_path: PathBuf, override_path: Option<&str>) -> ManagedStorageLocation {
+fn build_location(default_path: PathBuf, override_path: Option<String>) -> ManagedStorageLocation {
     let default_path_string = path_to_string(&default_path);
     match override_path {
         Some(override_path) => ManagedStorageLocation {
             default_path: default_path_string,
-            override_path: Some(override_path.to_string()),
-            effective_path: override_path.to_string(),
+            override_path: Some(override_path.clone()),
+            effective_path: override_path,
             source: ManagedStoragePathSource::Override,
         },
         None => ManagedStorageLocation {
@@ -133,6 +129,10 @@ fn build_location(default_path: PathBuf, override_path: Option<&str>) -> Managed
             source: ManagedStoragePathSource::Default,
         },
     }
+}
+
+fn normalize_loaded_override(value: Option<&str>) -> Option<String> {
+    normalize_override(value.map(str::to_owned)).ok().flatten()
 }
 
 fn current_storage_context() -> Result<ManagedStorageContext, String> {
@@ -192,8 +192,7 @@ fn require_environment_path(
     environment: &BTreeMap<OsString, OsString>,
     key: &str,
 ) -> Result<PathBuf, String> {
-    environment
-        .get(&OsString::from(key))
+    lookup_environment_value(environment, key)
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())
         .ok_or_else(|| {
@@ -201,6 +200,24 @@ fn require_environment_path(
                 "The desktop app could not resolve its managed storage defaults because the `{key}` environment variable was unavailable."
             )
         })
+}
+
+fn lookup_environment_value(
+    environment: &BTreeMap<OsString, OsString>,
+    key: &str,
+) -> Option<OsString> {
+    #[cfg(target_os = "windows")]
+    {
+        environment
+            .iter()
+            .find(|(candidate, _)| candidate.to_string_lossy().eq_ignore_ascii_case(key))
+            .map(|(_, value)| value.clone())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        environment.get(&OsString::from(key)).cloned()
+    }
 }
 
 fn load_persisted_overrides(
@@ -283,12 +300,57 @@ mod tests {
     use std::ffi::OsString;
     use std::path::PathBuf;
 
+    fn sample_tools_override_path() -> String {
+        if cfg!(target_os = "windows") {
+            r"C:\temp\be\tools".into()
+        } else {
+            "/tmp/be/tools".into()
+        }
+    }
+
+    fn sample_apk_library_override_path() -> String {
+        if cfg!(target_os = "windows") {
+            r"C:\temp\be\apk-library".into()
+        } else {
+            "/tmp/be/apk-library".into()
+        }
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn windows_defaults_use_local_app_data() {
         let mut environment = BTreeMap::new();
         environment.insert(
             OsString::from("LOCALAPPDATA"),
+            OsString::from(r"C:\Users\matt\AppData\Local"),
+        );
+
+        let context = current_storage_context_from_environment(&environment)
+            .expect("windows context should resolve");
+
+        assert_eq!(StorageOperatingSystem::Windows, context.operating_system);
+        assert_eq!(
+            PathBuf::from(r"C:\Users\matt\AppData\Local")
+                .join("Board Enthusiasts")
+                .join("BE Home for Desktop")
+                .join("tools"),
+            PathBuf::from(
+                build_managed_storage_settings(
+                    &context,
+                    &PersistedManagedStorageOverrides::default(),
+                )
+                .bdb_tools
+                .effective_path
+            )
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_defaults_allow_case_insensitive_local_app_data_keys() {
+        let mut environment = BTreeMap::new();
+        environment.insert(
+            OsString::from("LocalAppData"),
             OsString::from(r"C:\Users\matt\AppData\Local"),
         );
 
@@ -387,8 +449,8 @@ mod tests {
                 .join("managed-storage.json"),
         };
         let overrides = PersistedManagedStorageOverrides {
-            bdb_tools_override: Some("/tmp/be/tools".into()),
-            apk_library_override: Some("/tmp/be/apk-library".into()),
+            bdb_tools_override: Some(sample_tools_override_path()),
+            apk_library_override: Some(sample_apk_library_override_path()),
         };
 
         save_persisted_overrides(&context.settings_file_path, &overrides)
@@ -398,14 +460,46 @@ mod tests {
         let settings = build_managed_storage_settings(&context, &loaded);
 
         assert_eq!(
-            Some("/tmp/be/tools"),
+            Some(sample_tools_override_path().as_str()),
             settings.bdb_tools.override_path.as_deref()
         );
-        assert_eq!("/tmp/be/tools", settings.bdb_tools.effective_path);
+        assert_eq!(sample_tools_override_path(), settings.bdb_tools.effective_path);
         assert_eq!(
-            Some("/tmp/be/apk-library"),
+            Some(sample_apk_library_override_path().as_str()),
             settings.apk_library.override_path.as_deref()
         );
-        assert_eq!("/tmp/be/apk-library", settings.apk_library.effective_path);
+        assert_eq!(
+            sample_apk_library_override_path(),
+            settings.apk_library.effective_path
+        );
+    }
+
+    #[test]
+    fn invalid_loaded_overrides_fall_back_to_defaults() {
+        let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let context = ManagedStorageContext {
+            operating_system: StorageOperatingSystem::Linux,
+            app_data_root: temp_directory.path().join("app-data"),
+            settings_file_path: temp_directory
+                .path()
+                .join("settings")
+                .join("managed-storage.json"),
+        };
+        let persisted = PersistedManagedStorageOverrides {
+            bdb_tools_override: Some("relative/tools".into()),
+            apk_library_override: Some(sample_apk_library_override_path()),
+        };
+
+        let settings = build_managed_storage_settings(&context, &persisted);
+
+        assert_eq!(None, settings.bdb_tools.override_path);
+        assert_eq!(
+            context.app_data_root.join("tools"),
+            PathBuf::from(settings.bdb_tools.effective_path)
+        );
+        assert_eq!(
+            Some(sample_apk_library_override_path().as_str()),
+            settings.apk_library.override_path.as_deref()
+        );
     }
 }

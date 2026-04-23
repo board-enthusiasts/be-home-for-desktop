@@ -209,7 +209,7 @@ pub(crate) fn load_current_bdb_tool_state() -> Result<BdbToolState, String> {
 
 /// Download or repair `bdb`, then return the updated state.
 pub(crate) fn acquire_current_bdb_tool(repair: bool) -> Result<BdbAcquisitionResult, String> {
-    let source_plan = bdb::resolve_current_bdb_source_plan();
+    let source_plan = bdb::refresh_current_bdb_source_plan();
     let storage_settings = storage::load_managed_storage_settings()?;
     let downloader = ReqwestBinaryDownloader::new()?;
     Ok(acquire_bdb_tool_with_dependencies(
@@ -415,14 +415,58 @@ fn download_and_store_bdb<D: BinaryDownloader>(
             .map_err(|error| storage_write_error(&temp_path, &error))?;
     }
 
-    if executable_path.exists() {
-        fs::remove_file(&executable_path)
-            .map_err(|error| storage_write_error(&executable_path, &error))?;
+    replace_stored_bdb_binary(&temp_path, &executable_path)
+}
+
+fn replace_stored_bdb_binary(
+    temp_path: &Path,
+    executable_path: &Path,
+) -> Result<(), UserFacingError> {
+    replace_stored_bdb_binary_with_rename(temp_path, executable_path, &mut |from, to| {
+        fs::rename(from, to)
+    })
+}
+
+fn replace_stored_bdb_binary_with_rename<R>(
+    temp_path: &Path,
+    executable_path: &Path,
+    rename_file: &mut R,
+) -> Result<(), UserFacingError>
+where
+    R: FnMut(&Path, &Path) -> io::Result<()>,
+{
+    let backup_path = resolve_bdb_backup_path(executable_path);
+    if backup_path.exists() {
+        fs::remove_file(&backup_path).map_err(|error| storage_write_error(&backup_path, &error))?;
     }
 
-    fs::rename(&temp_path, &executable_path)
-        .map_err(|error| storage_write_error(&executable_path, &error))?;
+    if executable_path.exists() {
+        rename_file(executable_path, &backup_path)
+            .map_err(|error| storage_write_error(executable_path, &error))?;
+    }
+
+    if let Err(error) = rename_file(temp_path, executable_path) {
+        if backup_path.exists() {
+            let _ = rename_file(&backup_path, executable_path);
+        }
+
+        return Err(storage_write_error(executable_path, &error));
+    }
+
+    if backup_path.exists() {
+        let _ = fs::remove_file(&backup_path);
+    }
+
     Ok(())
+}
+
+fn resolve_bdb_backup_path(executable_path: &Path) -> PathBuf {
+    let backup_file_name = executable_path
+        .file_name()
+        .and_then(|file_name| file_name.to_str())
+        .map(|file_name| format!("{file_name}.previous"))
+        .unwrap_or_else(|| "bdb.previous".into());
+    executable_path.with_file_name(backup_file_name)
 }
 
 fn validate_runnable<P: ProcessRunner>(
@@ -528,9 +572,11 @@ fn path_to_string(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        acquire_bdb_tool_with_dependencies, inspect_bdb_tool_state_with_plan_and_runner,
-        BdbAcquisitionOutcome, BdbRunnableStatus, BdbToolStatus, BinaryDownloader,
-        ProcessRunFailure, ProcessRunFailureKind, ProcessRunOutput, ProcessRunner, UserFacingError,
+        acquire_bdb_tool_with_dependencies, bdb_executable_file_name,
+        inspect_bdb_tool_state_with_plan_and_runner, replace_stored_bdb_binary_with_rename,
+        resolve_bdb_backup_path, BdbAcquisitionOutcome, BdbRunnableStatus, BdbToolStatus,
+        BinaryDownloader, ProcessRunFailure, ProcessRunFailureKind, ProcessRunOutput,
+        ProcessRunner, UserFacingError,
     };
     use crate::{
         bdb::{
@@ -543,6 +589,7 @@ mod tests {
         },
     };
     use std::fs;
+    use std::io;
     use std::path::{Path, PathBuf};
 
     struct StaticDownloader {
@@ -670,6 +717,50 @@ mod tests {
             BdbRunnableStatus::Blocked,
             result.tool_state.validation.status
         );
+    }
+
+    #[test]
+    fn failed_replacement_restores_the_previous_bdb_binary() {
+        let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let settings = managed_storage_settings(temp_directory.path());
+        let executable_path = resolve_expected_executable_path(&settings);
+        let temp_path = executable_path
+            .parent()
+            .expect("executable should have parent")
+            .join(format!("{}.download", bdb_executable_file_name()));
+
+        fs::create_dir_all(
+            executable_path
+                .parent()
+                .expect("executable should have parent"),
+        )
+        .expect("tools directory should exist");
+        fs::write(&executable_path, "fresh-bdb").expect("existing binary should exist");
+        fs::write(&temp_path, "blocked-bdb").expect("downloaded replacement should exist");
+
+        let mut rename_attempt = 0;
+        let result =
+            replace_stored_bdb_binary_with_rename(&temp_path, &executable_path, &mut |from, to| {
+                rename_attempt += 1;
+                if rename_attempt == 2 {
+                    return Err(io::Error::new(io::ErrorKind::Other, "simulated rename failure"));
+                }
+
+                fs::rename(from, to)
+            });
+
+        assert!(result.is_err());
+        assert_eq!(
+            "fresh-bdb",
+            fs::read_to_string(&executable_path)
+                .expect("previous binary should be restored after a failed replacement")
+        );
+        assert_eq!(
+            "blocked-bdb",
+            fs::read_to_string(&temp_path)
+                .expect("downloaded temp file should remain available after the failed replacement")
+        );
+        assert!(!resolve_bdb_backup_path(&executable_path).exists());
     }
 
     #[test]
