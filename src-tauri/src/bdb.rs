@@ -82,7 +82,6 @@ struct DetectedPlatform {
     operating_system: BdbOperatingSystem,
     architecture: BdbArchitecture,
     windows_build: Option<u32>,
-    probe_error: Option<String>,
 }
 
 /// Describes the current machine's compatibility with the maintained `bdb` support matrix.
@@ -120,11 +119,17 @@ pub(crate) struct BdbSourcePlan {
 
 /// Resolve the maintained `bdb` source plan for the current machine.
 pub(crate) fn resolve_current_bdb_source_plan() -> BdbSourcePlan {
-    #[cfg(test)]
-    let allow_remote_manifest_refresh = false;
-    #[cfg(not(test))]
-    let allow_remote_manifest_refresh = true;
+    resolve_current_bdb_source_plan_with_remote_refresh(false)
+}
 
+/// Resolve the maintained `bdb` source plan and refresh its remote manifest when appropriate.
+pub(crate) fn refresh_current_bdb_source_plan() -> BdbSourcePlan {
+    resolve_current_bdb_source_plan_with_remote_refresh(true)
+}
+
+fn resolve_current_bdb_source_plan_with_remote_refresh(
+    allow_remote_manifest_refresh: bool,
+) -> BdbSourcePlan {
     let detected = detect_current_platform();
     let cache_path = resolve_manifest_cache_path();
     let manifest = load_manifest_with_fallbacks(
@@ -215,9 +220,9 @@ fn build_guidance_for_unsupported_platform(
         BdbUnsupportedReason::UnsupportedOperatingSystemVersion => {
             "Board currently advertises its Windows bdb build for Windows 11. This machine did not pass the Windows 11 compatibility check.".into()
         }
-        BdbUnsupportedReason::PlatformProbeFailed => detected.probe_error.clone().unwrap_or_else(
-            || "The app could not confirm this machine's supported platform details.".into(),
-        ),
+        BdbUnsupportedReason::PlatformProbeFailed => {
+            "BE Home could not confirm whether this Windows PC matches Board's current bdb support. Try again, and if this keeps happening, make sure Windows is fully up to date.".into()
+        }
         BdbUnsupportedReason::MissingManifestEntry => {
             "The maintained bdb source manifest is missing the Board-hosted URL for this supported platform key.".into()
         }
@@ -256,6 +261,16 @@ fn load_manifest_with_fallbacks<F>(
 where
     F: Fn(&str) -> Result<String, String>,
 {
+    let cached_manifest = cache_path.and_then(|cache_path| {
+        load_cached_manifest(cache_path)
+            .ok()
+            .map(|manifest| LoadedManifest {
+                manifest,
+                source: "cached",
+                cache_path: Some(cache_path.to_path_buf()),
+            })
+    });
+
     if allow_remote_manifest_refresh {
         if let Ok(remote_text) = fetch_remote_manifest(REMOTE_BDB_SOURCE_MANIFEST_URL) {
             if let Ok(manifest) = parse_manifest(&remote_text) {
@@ -270,16 +285,12 @@ where
                 };
             }
         }
+    } else if let Some(cached_manifest) = cached_manifest.clone() {
+        return cached_manifest;
     }
 
-    if let Some(cache_path) = cache_path {
-        if let Ok(manifest) = load_cached_manifest(cache_path) {
-            return LoadedManifest {
-                manifest,
-                source: "cached",
-                cache_path: Some(cache_path.to_path_buf()),
-            };
-        }
+    if let Some(cached_manifest) = cached_manifest {
+        return cached_manifest;
     }
 
     LoadedManifest {
@@ -376,35 +387,27 @@ fn detect_current_platform() -> DetectedPlatform {
     };
 
     #[cfg(target_os = "windows")]
-    let (windows_build, probe_error) = match detect_windows_build_number() {
-        Ok(build) => (Some(build), None),
-        Err(error) => (None, Some(error)),
-    };
+    let windows_build = detect_windows_build_number();
 
     #[cfg(not(target_os = "windows"))]
-    let (windows_build, probe_error) = (None, None);
+    let windows_build = None;
 
     DetectedPlatform {
         operating_system,
         architecture,
         windows_build,
-        probe_error,
     }
 }
 
 #[cfg(target_os = "windows")]
-fn detect_windows_build_number() -> Result<u32, String> {
+fn detect_windows_build_number() -> Option<u32> {
     let output = Command::new("cmd")
         .args(["/C", "ver"])
         .output()
-        .map_err(|error| format!("The app could not run `cmd /C ver` to confirm whether this machine is Windows 11: {error}"))?;
+        .ok()?;
 
     let version_text = String::from_utf8_lossy(&output.stdout);
-    parse_windows_build_number(&version_text).ok_or_else(|| {
-        format!(
-            "The app could not parse the Windows version output needed for Board's Windows 11-only bdb support check: {version_text}"
-        )
-    })
+    parse_windows_build_number(&version_text)
 }
 
 fn parse_windows_build_number(version_text: &str) -> Option<u32> {
@@ -433,6 +436,7 @@ mod tests {
         BdbSupportStatus, BdbUnsupportedReason, DetectedPlatform, LoadedManifest,
         LINUX_X86_64_PLATFORM_KEY, MACOS_UNIVERSAL_PLATFORM_KEY, WINDOWS_X86_64_PLATFORM_KEY,
     };
+    use std::cell::Cell;
     use std::fs;
 
     #[test]
@@ -509,6 +513,39 @@ mod tests {
     }
 
     #[test]
+    fn cached_manifest_is_used_without_remote_refreshing_on_state_reads() {
+        let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let cache_path = temp_directory
+            .path()
+            .join("cache")
+            .join("bdb-source-manifest.json");
+        let remote_fetch_attempted = Cell::new(false);
+        fs::create_dir_all(
+            cache_path
+                .parent()
+                .expect("cache directory should have parent"),
+        )
+        .expect("cache directory should exist");
+        fs::write(
+            &cache_path,
+            r#"{"schemaVersion":1,"platforms":{"linux-x86_64":"https://cached.example/bdb"}}"#,
+        )
+        .expect("cache manifest should be written");
+
+        let loaded = load_manifest_with_fallbacks(Some(&cache_path), false, |_| {
+            remote_fetch_attempted.set(true);
+            Err("offline".into())
+        });
+
+        assert_eq!("cached", loaded.source);
+        assert!(!remote_fetch_attempted.get());
+        assert_eq!(
+            Some(&"https://cached.example/bdb".to_string()),
+            loaded.manifest.platforms.get(LINUX_X86_64_PLATFORM_KEY)
+        );
+    }
+
+    #[test]
     fn bundled_manifest_is_used_when_remote_and_cache_are_unavailable() {
         let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
         let cache_path = temp_directory
@@ -546,7 +583,6 @@ mod tests {
                 operating_system: BdbOperatingSystem::Macos,
                 architecture: BdbArchitecture::Aarch64,
                 windows_build: None,
-                probe_error: None,
             },
         );
 
@@ -576,7 +612,6 @@ mod tests {
                 operating_system: BdbOperatingSystem::Linux,
                 architecture: BdbArchitecture::Arm,
                 windows_build: None,
-                probe_error: None,
             },
         );
 
@@ -601,7 +636,6 @@ mod tests {
                 operating_system: BdbOperatingSystem::Windows,
                 architecture: BdbArchitecture::X86_64,
                 windows_build: Some(26100),
-                probe_error: None,
             },
         );
 
@@ -631,7 +665,6 @@ mod tests {
                 operating_system: BdbOperatingSystem::Windows,
                 architecture: BdbArchitecture::X86_64,
                 windows_build: Some(19045),
-                probe_error: None,
             },
         );
 
@@ -644,7 +677,7 @@ mod tests {
     }
 
     #[test]
-    fn windows_probe_failures_are_explicit() {
+    fn windows_probe_failures_use_player_friendly_guidance() {
         let loaded_manifest = LoadedManifest {
             manifest: bundled_manifest(),
             source: "bundled",
@@ -656,7 +689,6 @@ mod tests {
                 operating_system: BdbOperatingSystem::Windows,
                 architecture: BdbArchitecture::X86_64,
                 windows_build: None,
-                probe_error: Some("version probe failed".into()),
             },
         );
 
@@ -665,7 +697,10 @@ mod tests {
             Some(BdbUnsupportedReason::PlatformProbeFailed),
             plan.support.reason
         );
-        assert_eq!("version probe failed", plan.support.guidance);
+        assert_eq!(
+            "BE Home could not confirm whether this Windows PC matches Board's current bdb support. Try again, and if this keeps happening, make sure Windows is fully up to date.",
+            plan.support.guidance
+        );
     }
 
     #[test]
