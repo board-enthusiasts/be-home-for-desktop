@@ -1,0 +1,161 @@
+.desktop-shell {
+  padding: clamp(1.25rem, 2.5vw, 2.5rem);
+}
+
+.desktop-grid {
+  max-width: 90rem;
+  margin: 0 auto;
+}
+
+.desktop-state-card {
+  margin-top: clamp(1rem, 4vw, 3rem);
+}
+
+.desktop-hero {
+  overflow: hidden;
+}
+
+.desktop-hero::after {
+  content: "";
+  position: absolute;
+  inset: auto -8rem -8rem auto;
+  width: 18rem;
+  height: 18rem;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle, rgba(77, 117, 244, 0.24) 0%, rgba(77, 117, 244, 0.12) 34%, transparent 72%);
+  pointer-events: none;
+}
+
+.desktop-hero-copy {
+  display: grid;
+  gap: 1rem;
+}
+
+.desktop-platform-note {
+  margin: 0;
+  font-size: 0.92rem;
+  color: rgba(220, 247, 234, 0.78);
+}
+
+.desktop-highlight-row,
+.desktop-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.desktop-highlight-row {
+  margin-top: 1.25rem;
+}
+
+.desktop-highlight {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.72rem 1rem;
+  border-radius: 999px;
+  border: 1px solid rgba(118, 255, 170, 0.24);
+  background:
+    radial-gradient(circle at 50% 0%, rgba(95, 255, 164, 0.14), transparent 56%),
+    linear-gradient(180deg, rgba(26, 24, 32, 0.94), rgba(17, 16, 24, 0.94));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 0 14px rgba(118, 255, 170, 0.14),
+    0 0 28px rgba(118, 255, 170, 0.05);
+}
+
+.desktop-highlight-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(220, 247, 234, 0.68);
+}
+
+.desktop-highlight-value {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #f7fff8;
+}
+
+.desktop-info-grid,
+.desktop-section-grid {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.desktop-info-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.desktop-section-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.desktop-panel,
+.desktop-section {
+  height: 100%;
+}
+
+.desktop-list {
+  margin: 1rem 0 0;
+  padding-left: 1.25rem;
+  color: rgb(203 213 225 / 1);
+}
+
+.desktop-list li + li {
+  margin-top: 0.8rem;
+}
+
+.desktop-list--ordered li::marker {
+  color: rgb(220 247 234 / 0.88);
+  font-weight: 700;
+}
+
+.desktop-section--sunrise {
+  border-color: rgba(243, 177, 58, 0.28);
+  box-shadow:
+    inset 0 1px 0 rgba(235, 255, 244, 0.04),
+    0 0 0 1px rgba(243, 177, 58, 0.08),
+    0 0 18px rgba(243, 177, 58, 0.12),
+    0 18px 52px rgba(8, 8, 12, 0.34);
+}
+
+.desktop-section--forest {
+  border-color: rgba(118, 255, 170, 0.3);
+}
+
+.desktop-section--ocean {
+  border-color: rgba(77, 117, 244, 0.28);
+  box-shadow:
+    inset 0 1px 0 rgba(235, 255, 244, 0.04),
+    0 0 0 1px rgba(77, 117, 244, 0.08),
+    0 0 18px rgba(77, 117, 244, 0.14),
+    0 18px 52px rgba(8, 8, 12, 0.34);
+}
+
+.desktop-section--slate {
+  border-color: rgba(196, 205, 255, 0.22);
+  box-shadow:
+    inset 0 1px 0 rgba(235, 255, 244, 0.04),
+    0 0 0 1px rgba(196, 205, 255, 0.05),
+    0 0 18px rgba(196, 205, 255, 0.08),
+    0 18px 52px rgba(8, 8, 12, 0.34);
+}
+
+@media (max-width: 960px) {
+  .desktop-info-grid,
+  .desktop-section-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .desktop-shell {
+    padding: 1rem;
+  }
+
+  .desktop-highlight {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
