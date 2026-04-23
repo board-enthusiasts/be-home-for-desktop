@@ -1,4 +1,5 @@
 mod bdb;
+mod storage;
 
 use serde::Serialize;
 
@@ -187,13 +188,27 @@ fn load_bdb_source_plan() -> bdb::BdbSourcePlan {
     bdb::resolve_current_bdb_source_plan()
 }
 
+#[tauri::command]
+fn load_managed_storage_settings() -> Result<storage::ManagedStorageSettings, String> {
+    storage::load_managed_storage_settings()
+}
+
+#[tauri::command]
+fn save_managed_storage_settings(
+    overrides: storage::ManagedStorageOverridesInput,
+) -> Result<storage::ManagedStorageSettings, String> {
+    storage::save_managed_storage_settings(overrides)
+}
+
 /// Starts the Tauri desktop host for BE Home for Desktop.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             load_shell_state,
-            load_bdb_source_plan
+            load_bdb_source_plan,
+            load_managed_storage_settings,
+            save_managed_storage_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running BE Home for Desktop");
@@ -278,5 +293,22 @@ mod tests {
             .get("remoteManifestUrl")
             .and_then(|value| value.as_str())
             .is_some_and(|value| value.contains("raw.githubusercontent.com/board-enthusiasts/be-home-for-desktop/main/config/bdb-sources.json")));
+    }
+
+    #[test]
+    fn managed_storage_settings_serialize_with_distinct_tool_and_library_locations() {
+        let settings = super::load_managed_storage_settings().expect("managed storage should load");
+        let serialized =
+            serde_json::to_value(settings).expect("managed storage settings should serialize");
+
+        assert!(serialized.get("settingsFilePath").is_some());
+        assert!(serialized
+            .get("bdbTools")
+            .and_then(|value| value.get("effectivePath"))
+            .is_some());
+        assert!(serialized
+            .get("apkLibrary")
+            .and_then(|value| value.get("effectivePath"))
+            .is_some());
     }
 }
