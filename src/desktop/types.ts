@@ -98,3 +98,41 @@ export interface BdbSourcePlan {
   support: BdbPlatformSupport;
   source: BdbDownloadSource | null;
 }
+
+/**
+ * Describes whether a managed storage location is using the default path or an override.
+ */
+export type ManagedStoragePathSource = "default" | "override";
+
+/**
+ * Describes one managed storage location and how its current path was chosen.
+ */
+export interface ManagedStorageLocation {
+  defaultPath: string;
+  overridePath: string | null;
+  effectivePath: string;
+  source: ManagedStoragePathSource;
+}
+
+/**
+ * Describes the normalized operating system used for managed-storage defaults.
+ */
+export type StorageOperatingSystem = "windows" | "macos" | "linux";
+
+/**
+ * Describes the current managed storage configuration for the desktop app.
+ */
+export interface ManagedStorageSettings {
+  operatingSystem: StorageOperatingSystem;
+  settingsFilePath: string;
+  bdbTools: ManagedStorageLocation;
+  apkLibrary: ManagedStorageLocation;
+}
+
+/**
+ * Represents the persisted override payload accepted by the desktop host.
+ */
+export interface ManagedStorageOverridesInput {
+  bdbToolsOverride: string | null;
+  apkLibraryOverride: string | null;
+}
