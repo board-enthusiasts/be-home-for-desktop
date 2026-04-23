@@ -1,8 +1,8 @@
 # BE Home for Desktop
 
-`be-home-for-desktop` is the planned desktop utility for helping Board players install, manage, and launch indie Board titles from Windows, macOS, and Linux with a guided experience instead of direct `bdb` terminal usage.
+`be-home-for-desktop` is the desktop utility for helping Board players install, manage, and launch indie Board titles from Windows, macOS, and Linux with a guided experience instead of direct `bdb` terminal usage.
 
-The maintained desktop stack is planned to use:
+The maintained desktop stack uses:
 
 - Tauri for the desktop shell
 - React + TypeScript for the renderer UI
@@ -33,15 +33,40 @@ The desktop utility is intended to:
 - `docs/`: developer-facing documentation for this repo
 - `planning/`: active planning artifacts for this repo
 
+## Current App Foundation
+
+The current desktop foundation includes:
+
+- a runnable Tauri desktop shell with player-facing BE product copy
+- shared BE styling imported from the `frontend` theme so the suite stays visually aligned
+- a Rust host command that returns structured shell state to the renderer
+- baseline renderer and host tests so future waves can extend the app safely
+
+Next delivery waves will add real `bdb` download, validation, device monitoring, APK scanning, and install orchestration services behind this foundation.
+
 ## Local Development Prerequisites
 
-The planned desktop stack needs both JavaScript and Rust toolchains.
+The desktop stack needs both JavaScript and Rust toolchains.
 
 - Node.js and npm for the React/Vite frontend and Tauri CLI
 - Rust toolchain (`rustup`, `cargo`, `rustc`) for the Tauri host app
 - Platform-specific Tauri prerequisites for Windows, macOS, or Linux packaging/signing
 
-At the time this repo was scaffolded in the current workspace, Node.js was available but Rust tooling was not yet installed locally. The planning and repository structure are in place, but the local desktop build toolchain still needs to be bootstrapped before Tauri builds can run here.
+## Local Development
+
+Install dependencies and launch the desktop shell:
+
+```bash
+npm install
+npm run tauri dev
+```
+
+Useful validation commands:
+
+```bash
+npm run build
+npm run test
+```
 
 ## Planning
 
