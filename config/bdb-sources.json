@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "platforms": {
+    "linux-x86_64": "https://dev.board.fun/downloads/bdb/linux/bdb",
+    "macos-universal": "https://dev.board.fun/downloads/bdb/macos-universal/bdb",
+    "windows-x86_64": "https://dev.board.fun/downloads/bdb/windows/bdb.exe"
+  }
+}

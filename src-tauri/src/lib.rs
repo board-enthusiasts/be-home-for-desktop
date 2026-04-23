@@ -1,3 +1,5 @@
+mod bdb;
+
 use serde::Serialize;
 
 #[derive(Clone, Serialize)]
@@ -180,11 +182,19 @@ fn load_shell_state() -> DesktopShellState {
     shell_state()
 }
 
+#[tauri::command]
+fn load_bdb_source_plan() -> bdb::BdbSourcePlan {
+    bdb::resolve_current_bdb_source_plan()
+}
+
 /// Starts the Tauri desktop host for BE Home for Desktop.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![load_shell_state])
+        .invoke_handler(tauri::generate_handler![
+            load_shell_state,
+            load_bdb_source_plan
+        ])
         .run(tauri::generate_context!())
         .expect("error while running BE Home for Desktop");
 }
@@ -255,5 +265,18 @@ mod tests {
             let normalized = entry.to_lowercase();
             banned_terms.iter().all(|term| !normalized.contains(term))
         }));
+    }
+
+    #[test]
+    fn bdb_source_plan_uses_the_bundled_manifest_contract() {
+        let plan = super::load_bdb_source_plan();
+        let serialized = serde_json::to_value(plan).expect("bdb source plan should serialize");
+
+        assert_eq!(Some("bundled"), serialized.get("manifestSource").and_then(|value| value.as_str()));
+        assert_eq!(Some(1), serialized.get("manifestSchemaVersion").and_then(|value| value.as_u64()));
+        assert!(serialized
+            .get("remoteManifestUrl")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| value.contains("raw.githubusercontent.com/board-enthusiasts/be-home-for-desktop/main/config/bdb-sources.json")));
     }
 }
