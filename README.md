@@ -52,6 +52,8 @@ The desktop stack needs both JavaScript and Rust toolchains.
 - Rust toolchain (`rustup`, `cargo`, `rustc`) for the Tauri host app
 - Platform-specific Tauri prerequisites for Windows, macOS, or Linux packaging/signing
 
+If Rust is not installed yet, you can still work on the renderer-only parts of the desktop app, but not the full Tauri host.
+
 ## Local Development
 
 Install dependencies and launch the desktop shell:
@@ -68,6 +70,26 @@ npm run build
 npm run test
 ```
 
+If you are still missing Rust locally, these repo-local commands remain useful:
+
+```bash
+npm install
+npm run dev
+npm run test:renderer
+```
+
+These commands still require the Rust toolchain:
+
+```bash
+npm run tauri dev
+npm run test:host
+npm run test
+```
+
 ## Planning
 
 Active planning lives in [`planning/`](planning/README.md).
+
+## Docs
+
+Contributor-facing desktop workflow notes live in [`docs/`](docs/README.md).
