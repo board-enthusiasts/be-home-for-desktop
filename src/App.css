@@ -404,6 +404,11 @@
   padding-block: 0.65rem;
 }
 
+.desktop-inline-action-stack {
+  display: grid;
+  gap: 0.6rem;
+}
+
 .desktop-inline-card,
 .desktop-inline-message {
   display: grid;

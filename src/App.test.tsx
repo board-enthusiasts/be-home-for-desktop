@@ -9,6 +9,7 @@ import type {
   ApkDiscoverySnapshot,
   DesktopSettings,
   DeviceStatusSnapshot,
+  InstallApkResult,
   InstalledTitlesSnapshot,
   ManagedApkLibraryImportResult,
   ManagedApkLibrarySnapshot,
@@ -282,6 +283,17 @@ const managedLibraryImportResultFixture: ManagedApkLibraryImportResult = {
     "Your original APK stayed where it was, and this managed copy is ready for later reinstall steps.",
   item: managedLibraryFixture.items[0],
   snapshot: managedLibraryFixture,
+};
+
+const installSuccessResultFixture: InstallApkResult = {
+  status: "installed",
+  summary: "BE Home installed LuckyDice.apk on Board.",
+  guidance:
+    "The device and installed-title views will refresh now so you can confirm the new install.",
+  detail: "Installed fun.board.luckydice",
+  command:
+    "C:\\Users\\Matt\\AppData\\Local\\Board Enthusiasts\\BE Home for Desktop\\tools\\bdb.exe install C:\\Users\\Matt\\Downloads\\LuckyDice.apk",
+  exitCode: 0,
 };
 
 const unsupportedSetupFixture: SetupGateState = {
@@ -720,6 +732,7 @@ describe("App", () => {
     expect(await screen.findByText("Latest manual APK pick")).toBeInTheDocument();
     expect(screen.getAllByText("ManualChoice.apk").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Possible Board match")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Install anyway" })).toBeInTheDocument();
     expect(
       screen.getByText(
         "BE Home found some Android packaging signals, but not the strongest Board marker yet.",
@@ -776,6 +789,58 @@ describe("App", () => {
         /Managed copy: C:\\Users\\Matt\\AppData\\Local\\Board Enthusiasts\\BE Home for Desktop\\apk-library\\LuckyDice\.apk/,
       ),
     ).toBeInTheDocument();
+  });
+
+  it("refreshes device and installed titles after a successful library install", async () => {
+    let deviceStatusReads = 0;
+    let installedTitlesReads = 0;
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "load_setup_gate_state") {
+        return runnableFixture;
+      }
+
+      if (command === "load_desktop_settings") {
+        return desktopSettingsFixture;
+      }
+
+      if (command === "load_device_status_snapshot") {
+        deviceStatusReads += 1;
+        return deviceStatusFixture;
+      }
+
+      if (command === "load_installed_titles_snapshot") {
+        installedTitlesReads += 1;
+        return installedTitlesFixture;
+      }
+
+      if (command === "load_apk_discovery_snapshot") {
+        return apkDiscoveryFixture;
+      }
+
+      if (command === "load_managed_apk_library_snapshot") {
+        return managedLibraryFixture;
+      }
+
+      if (command === "install_apk_to_connected_board") {
+        return installSuccessResultFixture;
+      }
+
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Your desktop install space is ready")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /APK Library/ }));
+
+    const installButtons = await screen.findAllByRole("button", { name: "Install on Board" });
+    fireEvent.click(installButtons[installButtons.length - 1]);
+
+    expect(await screen.findByText("BE Home installed LuckyDice.apk on Board.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(deviceStatusReads).toBeGreaterThanOrEqual(2);
+      expect(installedTitlesReads).toBeGreaterThanOrEqual(2);
+    });
   });
 
   it("shows a friendly host failure message", async () => {

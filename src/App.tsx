@@ -4,6 +4,7 @@ import { useEffect, useEffectEvent, useMemo, useState } from "react";
 import {
   acquireBdbTool,
   importApkToManagedLibrary,
+  installApkToConnectedBoard,
   inspectManualApkPath,
   loadApkDiscoverySnapshot,
   loadDesktopSettings,
@@ -20,6 +21,7 @@ import type {
   DesktopSettings,
   DesktopSettingsInput,
   DeviceStatusSnapshot,
+  InstallApkResult,
   InstalledTitlesSnapshot,
   ManagedApkLibraryImportResult,
   ManagedApkLibrarySnapshot,
@@ -187,6 +189,17 @@ function App() {
     actionPath: null,
     actionMessage: null,
     actionDetail: null,
+  });
+  const [apkInstallState, setApkInstallState] = useState<{
+    actionPath: string | null;
+    message: string | null;
+    detail: string | null;
+    lastStatus: InstallApkResult["status"] | null;
+  }>({
+    actionPath: null,
+    message: null,
+    detail: null,
+    lastStatus: null,
   });
   const [windowFocused, setWindowFocused] = useState(true);
   const [documentVisible, setDocumentVisible] = useState(
@@ -718,6 +731,42 @@ function App() {
     }
   }
 
+  async function handleInstallApk(
+    apkPath: string,
+  ): Promise<InstallApkResult | null> {
+    setApkInstallState({
+      actionPath: apkPath,
+      message: null,
+      detail: null,
+      lastStatus: null,
+    });
+
+    try {
+      const result = await installApkToConnectedBoard(apkPath);
+      setApkInstallState({
+        actionPath: null,
+        message: result.summary,
+        detail: result.detail ?? result.guidance,
+        lastStatus: result.status,
+      });
+
+      if (result.status === "installed") {
+        await refreshDeviceStatus("manual");
+        await refreshInstalledTitles("manual");
+      }
+
+      return result;
+    } catch {
+      setApkInstallState({
+        actionPath: null,
+        message: "BE Home couldn't finish that install request just yet.",
+        detail: "Please keep Board connected and try the same APK again in a moment.",
+        lastStatus: "failed",
+      });
+      return null;
+    }
+  }
+
   async function handleChooseManualApk(): Promise<void> {
     const selectedPath = await pickSinglePath(
       await open({
@@ -935,8 +984,10 @@ function App() {
               ) : activeWorkspaceSection === "apkLibrary" ? (
                 <ApkLibraryWorkspacePanel
                   apkDiscoveryState={apkDiscoveryState}
+                  apkInstallState={apkInstallState}
                   desktopSettings={desktopSettings}
                   managedLibraryState={managedLibraryState}
+                  onInstallApk={(apkPath) => void handleInstallApk(apkPath)}
                   onChooseManualApk={() => void handleChooseManualApk()}
                   onImportCandidate={(sourcePath) =>
                     void handleImportApkIntoManagedLibrary(sourcePath)
@@ -994,6 +1045,12 @@ interface ApkLibraryWorkspacePanelProps {
     errorMessage: string | null;
     errorDetail: string | null;
   };
+  apkInstallState: {
+    actionPath: string | null;
+    message: string | null;
+    detail: string | null;
+    lastStatus: InstallApkResult["status"] | null;
+  };
   desktopSettings: DesktopSettings | null;
   managedLibraryState: {
     loading: boolean;
@@ -1004,6 +1061,7 @@ interface ApkLibraryWorkspacePanelProps {
     actionMessage: string | null;
     actionDetail: string | null;
   };
+  onInstallApk: (apkPath: string) => void;
   onChooseManualApk: () => void;
   onImportCandidate: (sourcePath: string) => void;
   onRefresh: () => void;
@@ -1012,8 +1070,10 @@ interface ApkLibraryWorkspacePanelProps {
 
 function ApkLibraryWorkspacePanel({
   apkDiscoveryState,
+  apkInstallState,
   desktopSettings,
   managedLibraryState,
+  onInstallApk,
   onChooseManualApk,
   onImportCandidate,
   onRefresh,
@@ -1059,6 +1119,19 @@ function ApkLibraryWorkspacePanel({
             {apkDiscoveryState.errorDetail !== null ? (
               <p>{apkDiscoveryState.errorDetail}</p>
             ) : null}
+          </article>
+        ) : null}
+
+        {apkInstallState.message !== null ? (
+          <article
+            className={
+              apkInstallState.lastStatus === "failed"
+                ? "desktop-inline-message desktop-inline-message--warning"
+                : "desktop-inline-message"
+            }
+          >
+            <h3>{apkInstallState.message}</h3>
+            {apkInstallState.detail !== null ? <p>{apkInstallState.detail}</p> : null}
           </article>
         ) : null}
 
@@ -1125,6 +1198,18 @@ function ApkLibraryWorkspacePanel({
             ) : null}
             <div className="desktop-action-row">
               <button
+                className="primary-button"
+                disabled={apkInstallState.actionPath === apkDiscoveryState.manualCandidate.sourcePath}
+                onClick={() => onInstallApk(apkDiscoveryState.manualCandidate!.sourcePath)}
+                type="button"
+              >
+                {apkInstallState.actionPath === apkDiscoveryState.manualCandidate.sourcePath
+                  ? "Installing..."
+                  : apkDiscoveryState.manualCandidate.confidence === "strongMatch"
+                    ? "Install on Board"
+                    : "Install anyway"}
+              </button>
+              <button
                 className="secondary-button"
                 disabled={
                   managedLibraryState.actionPath === apkDiscoveryState.manualCandidate.sourcePath ||
@@ -1170,21 +1255,33 @@ function ApkLibraryWorkspacePanel({
                       {formatFileSize(candidate.fileSizeBytes)}
                     </span>
                   </div>
-                  <button
-                    className="secondary-button desktop-inline-button"
-                    disabled={
-                      managedLibraryState.actionPath === candidate.sourcePath ||
-                      importedSourcePathKeys.has(pathIdentityKey(candidate.sourcePath))
-                    }
-                    onClick={() => onImportCandidate(candidate.sourcePath)}
-                    type="button"
-                  >
-                    {managedLibraryState.actionPath === candidate.sourcePath
-                      ? "Copying..."
-                      : importedSourcePathKeys.has(pathIdentityKey(candidate.sourcePath))
-                        ? "Already in library"
-                        : "Keep a copy"}
-                  </button>
+                  <div className="desktop-inline-action-stack">
+                    <button
+                      className="primary-button desktop-inline-button"
+                      disabled={apkInstallState.actionPath === candidate.sourcePath}
+                      onClick={() => onInstallApk(candidate.sourcePath)}
+                      type="button"
+                    >
+                      {apkInstallState.actionPath === candidate.sourcePath
+                        ? "Installing..."
+                        : "Install on Board"}
+                    </button>
+                    <button
+                      className="secondary-button desktop-inline-button"
+                      disabled={
+                        managedLibraryState.actionPath === candidate.sourcePath ||
+                        importedSourcePathKeys.has(pathIdentityKey(candidate.sourcePath))
+                      }
+                      onClick={() => onImportCandidate(candidate.sourcePath)}
+                      type="button"
+                    >
+                      {managedLibraryState.actionPath === candidate.sourcePath
+                        ? "Copying..."
+                        : importedSourcePathKeys.has(pathIdentityKey(candidate.sourcePath))
+                          ? "Already in library"
+                          : "Keep a copy"}
+                    </button>
+                  </div>
                 </div>
               </li>
             ))}
@@ -1288,6 +1385,16 @@ function ApkLibraryWorkspacePanel({
                   <p className="desktop-library-timestamp">
                     Imported {formatTimestamp(item.importedAtUnixMs)}
                   </p>
+                  <button
+                    className="primary-button desktop-inline-button"
+                    disabled={apkInstallState.actionPath === item.managedPath}
+                    onClick={() => onInstallApk(item.managedPath)}
+                    type="button"
+                  >
+                    {apkInstallState.actionPath === item.managedPath
+                      ? "Installing..."
+                      : "Install on Board"}
+                  </button>
                 </div>
               </li>
             ))}

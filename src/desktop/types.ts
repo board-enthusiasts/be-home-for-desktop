@@ -107,6 +107,23 @@ export interface ManagedApkLibraryImportResult {
 }
 
 /**
+ * Describes whether one install attempt completed successfully.
+ */
+export type InstallApkStatus = "installed" | "failed";
+
+/**
+ * Describes the player-facing result of one `bdb install` attempt.
+ */
+export interface InstallApkResult {
+  status: InstallApkStatus;
+  summary: string;
+  guidance: string;
+  detail: string | null;
+  command: string;
+  exitCode: number | null;
+}
+
+/**
  * Describes the normalized device-connection state for the current `bdb` session.
  */
 export type DeviceStatusKind =
