@@ -360,6 +360,30 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "Next" })).toBeInTheDocument();
   });
 
+  it("allows ready setup-wizard close requests to proceed without interception", async () => {
+    currentWindowState.label = "setup-wizard";
+    installDefaultInvokeHandlers({
+      setupState: readySetupFixture,
+      toolState: runnableToolFixture,
+    });
+
+    render(<App />);
+
+    await screen.findByText("Here’s what setup will help you do.");
+
+    const closeRequestHandler =
+      onCloseRequestedMock.mock.calls[onCloseRequestedMock.mock.calls.length - 1]?.[0];
+    const closeEvent = {
+      preventDefault: vi.fn(),
+    };
+
+    invokeMock.mockClear();
+    await closeRequestHandler?.(closeEvent);
+
+    expect(closeEvent.preventDefault).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalledWith("dismiss_setup_wizard_window");
+  });
+
   it("routes the settings window", async () => {
     currentWindowState.label = "settings";
 
@@ -392,6 +416,36 @@ describe("App", () => {
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("open_setup_wizard_window");
+    });
+  });
+
+  it("refreshes the main workspace before opening it from ready setup", async () => {
+    currentWindowState.label = "setup-wizard";
+    installDefaultInvokeHandlers({
+      setupState: readySetupFixture,
+      toolState: runnableToolFixture,
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+    await screen.findByText("Get the Board Install Tool ready.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByText("Choose the folders BE Home should check.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByText("Choose where saved copies should live.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByText("Your setup choices are ready.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Finish" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("emit_settings_updated");
+      expect(invokeMock).toHaveBeenCalledWith("show_main_workspace_window");
+      expect(invokeMock).toHaveBeenCalledWith("dismiss_setup_wizard_window");
     });
   });
 

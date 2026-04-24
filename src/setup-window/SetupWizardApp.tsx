@@ -121,6 +121,10 @@ export default function SetupWizardApp() {
 
     void getCurrentWindow()
       .onCloseRequested(async (event) => {
+        if (setupGateState?.status === "ready") {
+          return;
+        }
+
         event.preventDefault();
         await handleCancelSetup();
       })
@@ -217,6 +221,12 @@ export default function SetupWizardApp() {
     await dismissSetupWizardWindow();
   }
 
+  async function handleOpenWorkspace(): Promise<void> {
+    await emitSettingsUpdated();
+    await showMainWorkspaceWindow();
+    await dismissSetupWizardWindow();
+  }
+
   async function handleDownloadOrRepair(): Promise<void> {
     if (toolState === null) {
       return;
@@ -251,12 +261,14 @@ export default function SetupWizardApp() {
     setInlineNotice(null);
 
     try {
-      await refreshWindowState({ refreshManifest: true });
+      const latestToolState = await refreshBdbToolState();
+      setToolState(latestToolState);
       setInlineNotice({
-        tone:
-          toolState?.updateStatus.status === "updateAvailable" ? "warning" : "neutral",
+        tone: latestToolState.updateStatus.status === "updateAvailable" ? "warning" : "neutral",
         title: "BE Home checked Board's latest Board Install Tool version.",
-        detail: toolState?.updateStatus.guidance ?? "You can review the current version details below.",
+        detail:
+          latestToolState.updateStatus.guidance ??
+          "You can review the current version details below.",
       });
     } catch {
       setInlineNotice({
@@ -365,8 +377,7 @@ export default function SetupWizardApp() {
       return;
     }
 
-    await showMainWorkspaceWindow();
-    await dismissSetupWizardWindow();
+    await handleOpenWorkspace();
   }
 
   async function handleNext(): Promise<void> {
