@@ -1,14 +1,20 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-import type { SetupGateState } from "./desktop/types";
+import type { DesktopSettings, SetupGateState } from "./desktop/types";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
 
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open: vi.fn(),
+}));
+
 const invokeMock = vi.mocked(invoke);
+const openMock = vi.mocked(open);
 
 const missingToolFixture: SetupGateState = {
   appName: "BE Home for Desktop",
@@ -101,9 +107,25 @@ const runnableFixture: SetupGateState = {
   },
 };
 
+const desktopSettingsFixture: DesktopSettings = {
+  operatingSystem: "windows",
+  settingsFilePath:
+    "C:\\Users\\Matt\\AppData\\Local\\Board Enthusiasts\\BE Home for Desktop\\settings\\managed-storage.json",
+  bdbTools: missingToolFixture.storage.bdbTools,
+  apkLibrary: missingToolFixture.storage.apkLibrary,
+  bdbExecutablePath: missingToolFixture.toolState.executablePath,
+  scanFolders: [
+    {
+      path: "C:\\Users\\Matt\\Downloads",
+      source: "default",
+    },
+  ],
+};
+
 describe("App", () => {
   beforeEach(() => {
     invokeMock.mockReset();
+    openMock.mockReset();
   });
 
   it("keeps players inside the setup flow when bdb is missing", async () => {
@@ -129,6 +151,10 @@ describe("App", () => {
         return runnableFixture;
       }
 
+      if (command === "load_desktop_settings") {
+        return desktopSettingsFixture;
+      }
+
       throw new Error(`Unexpected command: ${command}`);
     });
 
@@ -145,6 +171,10 @@ describe("App", () => {
       if (command === "load_setup_gate_state") {
         setupGateReads += 1;
         return setupGateReads === 1 ? missingToolFixture : runnableFixture;
+      }
+
+      if (command === "load_desktop_settings") {
+        return desktopSettingsFixture;
       }
 
       if (command === "acquire_bdb_tool") {
@@ -166,6 +196,51 @@ describe("App", () => {
 
     expect(await screen.findByText("Review the local defaults BE Home will start with.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open workspace" })).toBeInTheDocument();
+  });
+
+  it("lets players add a scan folder from settings", async () => {
+    openMock.mockResolvedValue("C:\\Users\\Matt\\Games");
+    invokeMock.mockImplementation(async (command, args) => {
+      if (command === "load_setup_gate_state") {
+        return runnableFixture;
+      }
+
+      if (command === "load_desktop_settings") {
+        return desktopSettingsFixture;
+      }
+
+      if (command === "save_desktop_settings") {
+        expect(args).toEqual({
+          input: {
+            apkLibraryOverride: null,
+            scanFolderPaths: ["C:\\Users\\Matt\\Downloads", "C:\\Users\\Matt\\Games"],
+          },
+        });
+        return {
+          ...desktopSettingsFixture,
+          scanFolders: [
+            ...desktopSettingsFixture.scanFolders,
+            {
+              path: "C:\\Users\\Matt\\Games",
+              source: "custom",
+            },
+          ],
+        };
+      }
+
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Your desktop install space is ready")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Settings/ }));
+    expect(await screen.findByText("Keep folders and storage understandable.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add scan folder" }));
+
+    expect(await screen.findByText("C:\\Users\\Matt\\Games")).toBeInTheDocument();
+    expect(screen.getByText("BE Home added a new scan folder.")).toBeInTheDocument();
   });
 
   it("shows a friendly host failure message", async () => {

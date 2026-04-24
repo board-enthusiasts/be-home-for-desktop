@@ -29,23 +29,38 @@ fn load_managed_storage_settings() -> Result<storage::ManagedStorageSettings, St
 }
 
 #[tauri::command]
+fn load_desktop_settings() -> Result<storage::DesktopSettings, String> {
+    storage::load_desktop_settings()
+}
+
+#[tauri::command]
 fn save_managed_storage_settings(
     overrides: storage::ManagedStorageOverridesInput,
 ) -> Result<storage::ManagedStorageSettings, String> {
     storage::save_managed_storage_settings(overrides)
 }
 
+#[tauri::command]
+fn save_desktop_settings(
+    input: storage::DesktopSettingsInput,
+) -> Result<storage::DesktopSettings, String> {
+    storage::save_desktop_settings(input)
+}
+
 /// Starts the Tauri desktop host for BE Home for Desktop.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             load_setup_gate_state,
             load_bdb_source_plan,
             load_bdb_tool_state,
             acquire_bdb_tool,
             load_managed_storage_settings,
-            save_managed_storage_settings
+            load_desktop_settings,
+            save_managed_storage_settings,
+            save_desktop_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running BE Home for Desktop");
@@ -103,6 +118,15 @@ mod tests {
             .get("apkLibrary")
             .and_then(|value| value.get("effectivePath"))
             .is_some());
+    }
+
+    #[test]
+    fn desktop_settings_serialize_with_scan_folders_and_bdb_path() {
+        let settings = super::load_desktop_settings().expect("desktop settings should load");
+        let serialized = serde_json::to_value(settings).expect("desktop settings should serialize");
+
+        assert!(serialized.get("scanFolders").is_some());
+        assert!(serialized.get("bdbExecutablePath").is_some());
     }
 
     #[test]

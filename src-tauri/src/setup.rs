@@ -1,11 +1,7 @@
 use crate::{bdb_tool, storage};
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::ffi::OsString;
-use std::path::PathBuf;
 
 const APP_NAME: &str = "BE Home for Desktop";
-const DOWNLOADS_DIRECTORY_NAME: &str = "Downloads";
 
 /// Describes whether the app must keep the player inside setup before opening the workspace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -43,13 +39,22 @@ pub(crate) struct SetupGateState {
 
 /// Load the current setup-gate state used to decide whether the app can open the workspace.
 pub(crate) fn load_setup_gate_state() -> Result<SetupGateState, String> {
-    let storage = storage::load_managed_storage_settings()?;
+    let desktop_settings = storage::load_desktop_settings()?;
     let tool_state = bdb_tool::load_current_bdb_tool_state()?;
 
     Ok(build_setup_gate_state(
         tool_state,
-        storage,
-        resolve_default_scan_folders(),
+        storage::ManagedStorageSettings {
+            operating_system: desktop_settings.operating_system,
+            settings_file_path: desktop_settings.settings_file_path.clone(),
+            bdb_tools: desktop_settings.bdb_tools.clone(),
+            apk_library: desktop_settings.apk_library.clone(),
+        },
+        desktop_settings
+            .scan_folders
+            .iter()
+            .map(|folder| folder.path.clone())
+            .collect(),
     ))
 }
 
@@ -102,65 +107,6 @@ fn build_setup_gate_state(
     }
 }
 
-fn resolve_default_scan_folders() -> Vec<String> {
-    resolve_default_scan_folders_from_environment(&std::env::vars_os().collect::<BTreeMap<_, _>>())
-}
-
-fn resolve_default_scan_folders_from_environment(
-    environment: &BTreeMap<OsString, OsString>,
-) -> Vec<String> {
-    let mut folders = Vec::new();
-    if let Some(home_directory) = resolve_home_directory(environment) {
-        folders.push(
-            home_directory
-                .join(DOWNLOADS_DIRECTORY_NAME)
-                .to_string_lossy()
-                .into_owned(),
-        );
-    }
-
-    folders
-}
-
-fn resolve_home_directory(environment: &BTreeMap<OsString, OsString>) -> Option<PathBuf> {
-    #[cfg(target_os = "windows")]
-    {
-        lookup_environment_value(environment, "USERPROFILE")
-            .or_else(|| {
-                let drive = lookup_environment_value(environment, "HOMEDRIVE")?;
-                let path = lookup_environment_value(environment, "HOMEPATH")?;
-                Some(format!("{}{}", drive.to_string_lossy(), path.to_string_lossy()).into())
-            })
-            .map(PathBuf::from)
-            .filter(|path| !path.as_os_str().is_empty())
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        lookup_environment_value(environment, "HOME")
-            .map(PathBuf::from)
-            .filter(|path| !path.as_os_str().is_empty())
-    }
-}
-
-fn lookup_environment_value(
-    environment: &BTreeMap<OsString, OsString>,
-    key: &str,
-) -> Option<OsString> {
-    #[cfg(target_os = "windows")]
-    {
-        environment
-            .iter()
-            .find(|(candidate, _)| candidate.to_string_lossy().eq_ignore_ascii_case(key))
-            .map(|(_, value)| value.clone())
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        environment.get(&OsString::from(key)).cloned()
-    }
-}
-
 fn current_platform_label() -> &'static str {
     if cfg!(target_os = "windows") {
         "Windows"
@@ -175,10 +121,7 @@ fn current_platform_label() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        build_setup_gate_state, resolve_default_scan_folders_from_environment, SetupGateStatus,
-        SetupRequiredStep,
-    };
+    use super::{build_setup_gate_state, SetupGateStatus, SetupRequiredStep};
     use crate::{
         bdb::{
             BdbArchitecture, BdbDownloadSource, BdbOperatingSystem, BdbPlatformSupport,
@@ -190,9 +133,6 @@ mod tests {
             StorageOperatingSystem,
         },
     };
-    use std::collections::BTreeMap;
-    use std::ffi::OsString;
-
     #[test]
     fn missing_tool_requires_setup_download_step() {
         let state = build_setup_gate_state(
@@ -227,31 +167,6 @@ mod tests {
 
         assert_eq!(SetupGateStatus::Unsupported, state.status);
         assert_eq!(SetupRequiredStep::SystemCheck, state.required_step);
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn windows_scan_folder_defaults_use_user_profile() {
-        let mut environment = BTreeMap::new();
-        environment.insert(
-            OsString::from("USERPROFILE"),
-            OsString::from(r"C:\Users\matt"),
-        );
-
-        let folders = resolve_default_scan_folders_from_environment(&environment);
-
-        assert_eq!(vec![r"C:\Users\matt\Downloads".to_string()], folders);
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn unix_scan_folder_defaults_use_home_downloads() {
-        let mut environment = BTreeMap::new();
-        environment.insert(OsString::from("HOME"), OsString::from("/home/matt"));
-
-        let folders = resolve_default_scan_folders_from_environment(&environment);
-
-        assert_eq!(vec!["/home/matt/Downloads".to_string()], folders);
     }
 
     fn sample_tool_state(

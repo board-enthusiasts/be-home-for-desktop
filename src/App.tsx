@@ -1,8 +1,15 @@
+import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useMemo, useState } from "react";
-import { acquireBdbTool, loadSetupGateState } from "./desktop/client";
+import {
+  acquireBdbTool,
+  loadDesktopSettings,
+  loadSetupGateState,
+  saveDesktopSettings,
+} from "./desktop/client";
 import type {
   BdbAcquisitionResult,
-  BdbPlatformSupport,
+  DesktopSettings,
+  DesktopSettingsInput,
   ManagedStorageLocation,
   SetupGateState,
 } from "./desktop/types";
@@ -76,6 +83,7 @@ const workspaceSections: WorkspaceSection[] = [
 
 function App() {
   const [setupGateState, setSetupGateState] = useState<SetupGateState | null>(null);
+  const [desktopSettings, setDesktopSettings] = useState<DesktopSettings | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [setupViewStep, setSetupViewStep] = useState<SetupViewStep>("systemCheck");
   const [showReviewDefaults, setShowReviewDefaults] = useState(false);
@@ -90,6 +98,15 @@ function App() {
     detail: null,
     lastOutcome: null,
   });
+  const [settingsActionState, setSettingsActionState] = useState<{
+    loading: boolean;
+    message: string | null;
+    detail: string | null;
+  }>({
+    loading: false,
+    message: null,
+    detail: null,
+  });
   const [activeWorkspaceSection, setActiveWorkspaceSection] =
     useState<WorkspaceSectionId>("device");
 
@@ -97,12 +114,22 @@ function App() {
     void refreshSetupGateState();
   }, []);
 
+  useEffect(() => {
+    if (setupGateState?.status === "ready") {
+      void refreshDesktopSettings();
+    } else {
+      setDesktopSettings(null);
+    }
+  }, [setupGateState?.status]);
+
   const shouldShowSetup =
     setupGateState !== null &&
     (setupGateState.status !== "ready" || showReviewDefaults);
 
   const activeWorkspaceSectionState = useMemo(
-    () => workspaceSections.find((section) => section.id === activeWorkspaceSection) ?? workspaceSections[0],
+    () =>
+      workspaceSections.find((section) => section.id === activeWorkspaceSection) ??
+      workspaceSections[0],
     [activeWorkspaceSection],
   );
 
@@ -134,7 +161,22 @@ function App() {
     }
   }
 
-  async function handleAcquireBdbTool(repair: boolean): Promise<void> {
+  async function refreshDesktopSettings(): Promise<void> {
+    try {
+      const settings = await loadDesktopSettings();
+      setDesktopSettings(settings);
+    } catch {
+      setSettingsActionState({
+        loading: false,
+        message: "BE Home couldn't load your settings just yet.",
+        detail: "Try refreshing the app or reopening the settings section.",
+      });
+    }
+  }
+
+  async function handleAcquireBdbTool(
+    repair: boolean,
+  ): Promise<BdbAcquisitionResult | null> {
     setToolActionState({
       loading: true,
       message: null,
@@ -155,6 +197,7 @@ function App() {
           result.toolState.status === "runnable" &&
           (result.outcome === "downloaded" || result.outcome === "repaired"),
       });
+      return result;
     } catch {
       setToolActionState({
         loading: false,
@@ -162,7 +205,148 @@ function App() {
         detail: "Please try again in a moment.",
         lastOutcome: "failed",
       });
+      return null;
     }
+  }
+
+  async function persistDesktopSettings(
+    input: DesktopSettingsInput,
+    successMessage: string,
+  ): Promise<void> {
+    setSettingsActionState({
+      loading: true,
+      message: null,
+      detail: null,
+    });
+
+    try {
+      const savedSettings = await saveDesktopSettings(input);
+      setDesktopSettings(savedSettings);
+      setSettingsActionState({
+        loading: false,
+        message: successMessage,
+        detail: "Your changes are saved and will still be here when you reopen the app.",
+      });
+      await refreshSetupGateState();
+    } catch {
+      setSettingsActionState({
+        loading: false,
+        message: "BE Home couldn't save those settings.",
+        detail: "Please try again in a moment.",
+      });
+    }
+  }
+
+  async function handleAddScanFolder(): Promise<void> {
+    if (desktopSettings === null) {
+      return;
+    }
+
+    const selectedPath = await pickSinglePath(
+      await open({
+        directory: true,
+        multiple: false,
+        defaultPath:
+          desktopSettings.scanFolders[desktopSettings.scanFolders.length - 1]?.path ??
+          desktopSettings.apkLibrary.effectivePath,
+      }),
+    );
+    if (selectedPath === null) {
+      return;
+    }
+
+    if (desktopSettings.scanFolders.some((folder) => folder.path === selectedPath)) {
+      setSettingsActionState({
+        loading: false,
+        message: "That folder is already on your scan list.",
+        detail: "Choose another folder if you want BE Home to watch an additional place.",
+      });
+      return;
+    }
+
+    await persistDesktopSettings(
+      {
+        apkLibraryOverride: desktopSettings.apkLibrary.overridePath,
+        scanFolderPaths: [
+          ...desktopSettings.scanFolders.map((folder) => folder.path),
+          selectedPath,
+        ],
+      },
+      "BE Home added a new scan folder.",
+    );
+  }
+
+  async function handleRemoveScanFolder(path: string): Promise<void> {
+    if (desktopSettings === null) {
+      return;
+    }
+
+    await persistDesktopSettings(
+      {
+        apkLibraryOverride: desktopSettings.apkLibrary.overridePath,
+        scanFolderPaths: desktopSettings.scanFolders
+          .map((folder) => folder.path)
+          .filter((scanFolderPath) => scanFolderPath !== path),
+      },
+      "BE Home updated your scan folder list.",
+    );
+  }
+
+  async function handleChangeApkLibraryLocation(): Promise<void> {
+    if (desktopSettings === null) {
+      return;
+    }
+
+    const selectedPath = await pickSinglePath(
+      await open({
+        directory: true,
+        multiple: false,
+        defaultPath: desktopSettings.apkLibrary.effectivePath,
+      }),
+    );
+    if (selectedPath === null) {
+      return;
+    }
+
+    await persistDesktopSettings(
+      {
+        apkLibraryOverride: selectedPath,
+        scanFolderPaths: desktopSettings.scanFolders.map((folder) => folder.path),
+      },
+      "BE Home updated the managed APK library location.",
+    );
+  }
+
+  async function handleResetApkLibraryLocation(): Promise<void> {
+    if (desktopSettings === null) {
+      return;
+    }
+
+    await persistDesktopSettings(
+      {
+        apkLibraryOverride: null,
+        scanFolderPaths: desktopSettings.scanFolders.map((folder) => folder.path),
+      },
+      "BE Home switched the APK library back to the app default folder.",
+    );
+  }
+
+  async function handleRepairFromSettings(): Promise<void> {
+    const result = await handleAcquireBdbTool(true);
+    if (result === null) {
+      setSettingsActionState({
+        loading: false,
+        message: "BE Home couldn't start the bdb repair just yet.",
+        detail: "Please try again in a moment.",
+      });
+      return;
+    }
+
+    setSettingsActionState({
+      loading: false,
+      message: result.summary,
+      detail: result.guidance,
+    });
   }
 
   if (errorMessage !== null) {
@@ -187,7 +371,8 @@ function App() {
             <div className="eyebrow">Opening BE Home for Desktop</div>
             <h2>Just a moment while we check your setup.</h2>
             <p className="panel-description">
-              We're checking whether Board's install tool is ready and whether your desktop workspace can open.
+              We're checking whether Board's install tool is ready and whether your desktop
+              workspace can open.
             </p>
           </section>
         </section>
@@ -201,7 +386,11 @@ function App() {
         <section className="hero-panel desktop-banner">
           <div className="hero-copy desktop-banner-copy">
             <div className="eyebrow">BE Home for Desktop</div>
-            <h1>{shouldShowSetup ? "Get your install workspace ready" : "Your desktop install space is ready"}</h1>
+            <h1>
+              {shouldShowSetup
+                ? "Get your install workspace ready"
+                : "Your desktop install space is ready"}
+            </h1>
             <p>{setupGateState.summary}</p>
             <p className="desktop-platform-note">
               {setupGateState.platformLabel} desktop · v{setupGateState.version}
@@ -301,36 +490,51 @@ function App() {
             </aside>
 
             <section className="desktop-workspace-main">
-              <article className="panel desktop-workspace-panel">
-                <div className="eyebrow">{activeWorkspaceSectionState.eyebrow}</div>
-                <h2>{activeWorkspaceSectionState.title}</h2>
-                <p className="panel-description">{activeWorkspaceSectionState.summary}</p>
-                <ul className="desktop-list">
-                  {activeWorkspaceSectionState.bullets.map((item) => (
-                    <li key={`${activeWorkspaceSectionState.id}-${item}`}>{item}</li>
-                  ))}
-                </ul>
-              </article>
+              {activeWorkspaceSection === "settings" ? (
+                <SettingsWorkspacePanel
+                  desktopSettings={desktopSettings}
+                  setupGateState={setupGateState}
+                  settingsActionState={settingsActionState}
+                  onAddScanFolder={() => void handleAddScanFolder()}
+                  onRemoveScanFolder={(path) => void handleRemoveScanFolder(path)}
+                  onChangeApkLibraryLocation={() => void handleChangeApkLibraryLocation()}
+                  onResetApkLibraryLocation={() => void handleResetApkLibraryLocation()}
+                  onRepairBdb={() => void handleRepairFromSettings()}
+                />
+              ) : (
+                <>
+                  <article className="panel desktop-workspace-panel">
+                    <div className="eyebrow">{activeWorkspaceSectionState.eyebrow}</div>
+                    <h2>{activeWorkspaceSectionState.title}</h2>
+                    <p className="panel-description">{activeWorkspaceSectionState.summary}</p>
+                    <ul className="desktop-list">
+                      {activeWorkspaceSectionState.bullets.map((item) => (
+                        <li key={`${activeWorkspaceSectionState.id}-${item}`}>{item}</li>
+                      ))}
+                    </ul>
+                  </article>
 
-              <article className="panel desktop-workspace-panel">
-                <div className="eyebrow">Ready now</div>
-                <h2>Board's install tool is already checked.</h2>
-                <p className="panel-description">{setupGateState.toolState.summary}</p>
-                <dl className="desktop-detail-grid">
-                  <DetailRow
-                    label="Managed bdb location"
-                    value={setupGateState.toolState.executablePath}
-                  />
-                  <DetailRow
-                    label="Managed APK library"
-                    value={setupGateState.storage.apkLibrary.effectivePath}
-                  />
-                  <DetailRow
-                    label="Default scan folder"
-                    value={formatScanFolders(setupGateState.defaultScanFolders)}
-                  />
-                </dl>
-              </article>
+                  <article className="panel desktop-workspace-panel">
+                    <div className="eyebrow">Ready now</div>
+                    <h2>Board's install tool is already checked.</h2>
+                    <p className="panel-description">{setupGateState.toolState.summary}</p>
+                    <dl className="desktop-detail-grid">
+                      <DetailRow
+                        label="Managed bdb location"
+                        value={setupGateState.toolState.executablePath}
+                      />
+                      <DetailRow
+                        label="Managed APK library"
+                        value={setupGateState.storage.apkLibrary.effectivePath}
+                      />
+                      <DetailRow
+                        label="Active scan folder"
+                        value={formatScanFolders(setupGateState.defaultScanFolders)}
+                      />
+                    </dl>
+                  </article>
+                </>
+              )}
             </section>
           </section>
         )}
@@ -364,7 +568,11 @@ interface SystemCheckStepProps {
   onRefresh: () => void;
 }
 
-function SystemCheckStep({ setupGateState, onContinue, onRefresh }: SystemCheckStepProps) {
+function SystemCheckStep({
+  setupGateState,
+  onContinue,
+  onRefresh,
+}: SystemCheckStepProps) {
   const support = setupGateState.toolState.sourcePlan.support;
   const isBlocked = setupGateState.status === "unsupported";
 
@@ -379,7 +587,11 @@ function SystemCheckStep({ setupGateState, onContinue, onRefresh }: SystemCheckS
         <DetailRow label="Architecture" value={support.architecture} />
         <DetailRow
           label="Windows build"
-          value={support.windowsBuild === null ? "Not needed on this platform" : String(support.windowsBuild)}
+          value={
+            support.windowsBuild === null
+              ? "Not needed on this platform"
+              : String(support.windowsBuild)
+          }
         />
       </dl>
 
@@ -390,7 +602,12 @@ function SystemCheckStep({ setupGateState, onContinue, onRefresh }: SystemCheckS
       />
 
       <div className="desktop-action-row">
-        <button className="primary-button" disabled={isBlocked} onClick={onContinue} type="button">
+        <button
+          className="primary-button"
+          disabled={isBlocked}
+          onClick={onContinue}
+          type="button"
+        >
           Continue to bdb setup
         </button>
         <button className="secondary-button" onClick={onRefresh} type="button">
@@ -432,9 +649,18 @@ function ToolSetupStep({
       <h2>Get Board's install tool ready.</h2>
       <p className="panel-description">{setupGateState.toolState.guidance}</p>
       <dl className="desktop-detail-grid">
-        <DetailRow label="Managed tool folder" value={setupGateState.toolState.storage.effectivePath} />
-        <DetailRow label="Executable path" value={setupGateState.toolState.executablePath} />
-        <DetailRow label="Runnable check" value={statusLabel(setupGateState.toolState.validation.status)} />
+        <DetailRow
+          label="Managed tool folder"
+          value={setupGateState.toolState.storage.effectivePath}
+        />
+        <DetailRow
+          label="Executable path"
+          value={setupGateState.toolState.executablePath}
+        />
+        <DetailRow
+          label="Runnable check"
+          value={statusLabel(setupGateState.toolState.validation.status)}
+        />
       </dl>
 
       <StatusSummaryCard
@@ -465,10 +691,20 @@ function ToolSetupStep({
         >
           {toolActionState.loading ? "Working..." : primaryActionLabel}
         </button>
-        <button className="secondary-button" disabled={toolActionState.loading} onClick={onRefresh} type="button">
+        <button
+          className="secondary-button"
+          disabled={toolActionState.loading}
+          onClick={onRefresh}
+          type="button"
+        >
           Refresh checks
         </button>
-        <button className="tertiary-button" disabled={toolActionState.loading} onClick={onBack} type="button">
+        <button
+          className="tertiary-button"
+          disabled={toolActionState.loading}
+          onClick={onBack}
+          type="button"
+        >
           Back
         </button>
       </div>
@@ -482,18 +718,32 @@ interface ReviewDefaultsStepProps {
   onBack: () => void;
 }
 
-function ReviewDefaultsStep({ setupGateState, onOpenWorkspace, onBack }: ReviewDefaultsStepProps) {
+function ReviewDefaultsStep({
+  setupGateState,
+  onOpenWorkspace,
+  onBack,
+}: ReviewDefaultsStepProps) {
   return (
     <>
       <div className="eyebrow">Step 3</div>
       <h2>Review the local defaults BE Home will start with.</h2>
       <p className="panel-description">
-        You can change these locations later, but this is the familiar starting point BE Home will use today.
+        You can change these locations later, but this is the familiar starting
+        point BE Home will use today.
       </p>
       <dl className="desktop-detail-grid">
-        <DetailRow label="Managed bdb folder" value={setupGateState.storage.bdbTools.effectivePath} />
-        <DetailRow label="Managed APK library" value={setupGateState.storage.apkLibrary.effectivePath} />
-        <DetailRow label="Default scan folder" value={formatScanFolders(setupGateState.defaultScanFolders)} />
+        <DetailRow
+          label="Managed bdb folder"
+          value={setupGateState.storage.bdbTools.effectivePath}
+        />
+        <DetailRow
+          label="Managed APK library"
+          value={setupGateState.storage.apkLibrary.effectivePath}
+        />
+        <DetailRow
+          label="Default scan folder"
+          value={formatScanFolders(setupGateState.defaultScanFolders)}
+        />
       </dl>
       <div className="desktop-action-row">
         <button className="primary-button" onClick={onOpenWorkspace} type="button">
@@ -503,6 +753,180 @@ function ReviewDefaultsStep({ setupGateState, onOpenWorkspace, onBack }: ReviewD
           Back
         </button>
       </div>
+    </>
+  );
+}
+
+interface SettingsWorkspacePanelProps {
+  desktopSettings: DesktopSettings | null;
+  setupGateState: SetupGateState;
+  settingsActionState: {
+    loading: boolean;
+    message: string | null;
+    detail: string | null;
+  };
+  onAddScanFolder: () => void;
+  onRemoveScanFolder: (path: string) => void;
+  onChangeApkLibraryLocation: () => void;
+  onResetApkLibraryLocation: () => void;
+  onRepairBdb: () => void;
+}
+
+function SettingsWorkspacePanel({
+  desktopSettings,
+  setupGateState,
+  settingsActionState,
+  onAddScanFolder,
+  onRemoveScanFolder,
+  onChangeApkLibraryLocation,
+  onResetApkLibraryLocation,
+  onRepairBdb,
+}: SettingsWorkspacePanelProps) {
+  if (desktopSettings === null) {
+    return (
+      <>
+        <article className="panel desktop-workspace-panel">
+          <div className="eyebrow">Settings</div>
+          <h2>Loading your folder settings.</h2>
+          <p className="panel-description">
+            BE Home is loading your current scan folders and storage choices.
+          </p>
+        </article>
+        <article className="panel desktop-workspace-panel">
+          <div className="eyebrow">Ready now</div>
+          <h2>Board's install tool is still checked.</h2>
+          <p className="panel-description">{setupGateState.toolState.summary}</p>
+        </article>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <article className="panel desktop-workspace-panel">
+        <div className="eyebrow">Settings</div>
+        <h2>Keep folders and storage understandable.</h2>
+        <p className="panel-description">
+          These settings stay focused on the places BE Home actually uses, so you
+          can shape your install routine without hunting through app files.
+        </p>
+
+        {settingsActionState.message !== null ? (
+          <article className="desktop-inline-message">
+            <h3>{settingsActionState.message}</h3>
+            {settingsActionState.detail !== null ? (
+              <p>{settingsActionState.detail}</p>
+            ) : null}
+          </article>
+        ) : null}
+
+        <section className="desktop-settings-group">
+          <div className="desktop-settings-group-copy">
+            <h3>Scan folders</h3>
+            <p>BE Home starts with places that already feel familiar, like Downloads.</p>
+          </div>
+          <ul className="desktop-folder-list">
+            {desktopSettings.scanFolders.map((folder) => (
+              <li className="desktop-folder-item" key={folder.path}>
+                <div className="desktop-folder-copy">
+                  <span className="desktop-folder-path">{folder.path}</span>
+                  <span className="desktop-folder-meta">
+                    {folder.source === "default" ? "App default" : "Added by you"}
+                  </span>
+                </div>
+                <button
+                  className="tertiary-button desktop-inline-button"
+                  disabled={settingsActionState.loading}
+                  onClick={() => onRemoveScanFolder(folder.path)}
+                  type="button"
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+          <button
+            className="secondary-button"
+            disabled={settingsActionState.loading}
+            onClick={onAddScanFolder}
+            type="button"
+          >
+            Add scan folder
+          </button>
+        </section>
+
+        <section className="desktop-settings-group">
+          <div className="desktop-settings-group-copy">
+            <h3>Managed APK library</h3>
+            <p>
+              Keep reused APKs in one steady place so reinstalling later takes fewer steps.
+            </p>
+          </div>
+          <dl className="desktop-detail-grid">
+            <DetailRow
+              label="Current location"
+              value={desktopSettings.apkLibrary.effectivePath}
+            />
+            <DetailRow
+              label="Location style"
+              value={locationSourceLabel(desktopSettings.apkLibrary)}
+            />
+          </dl>
+          <div className="desktop-action-row">
+            <button
+              className="secondary-button"
+              disabled={settingsActionState.loading}
+              onClick={onChangeApkLibraryLocation}
+              type="button"
+            >
+              Choose another folder
+            </button>
+            {desktopSettings.apkLibrary.overridePath !== null ? (
+              <button
+                className="tertiary-button"
+                disabled={settingsActionState.loading}
+                onClick={onResetApkLibraryLocation}
+                type="button"
+              >
+                Use app default
+              </button>
+            ) : null}
+          </div>
+        </section>
+      </article>
+
+      <article className="panel desktop-workspace-panel">
+        <div className="eyebrow">Board tool</div>
+        <h2>Keep bdb easy to find and easy to repair.</h2>
+        <p className="panel-description">
+          BE Home keeps the Board install tool in its own managed folder for MVP,
+          then offers repair here if the stored copy ever needs attention.
+        </p>
+        <dl className="desktop-detail-grid">
+          <DetailRow
+            label="Managed bdb location"
+            value={desktopSettings.bdbExecutablePath}
+          />
+          <DetailRow
+            label="Current status"
+            value={setupGateState.toolState.summary}
+          />
+          <DetailRow
+            label="Settings file"
+            value={desktopSettings.settingsFilePath}
+          />
+        </dl>
+        <div className="desktop-action-row">
+          <button
+            className="primary-button"
+            disabled={settingsActionState.loading}
+            onClick={onRepairBdb}
+            type="button"
+          >
+            Repair bdb
+          </button>
+        </div>
+      </article>
     </>
   );
 }
@@ -567,10 +991,17 @@ function describeSetupStepStatus(
 }
 
 function formatScanFolders(scanFolders: string[]): string {
-  return scanFolders.length === 0 ? "Downloads will be added when BE Home can resolve them on this computer." : scanFolders.join(", ");
+  return scanFolders.length === 0
+    ? "Add a folder when you want BE Home to look beyond manual file picks."
+    : scanFolders.join(", ");
 }
 
-function statusLabel(value: SetupGateState["status"] | SetupGateState["toolState"]["status"] | SetupGateState["toolState"]["validation"]["status"]): string {
+function statusLabel(
+  value:
+    | SetupGateState["status"]
+    | SetupGateState["toolState"]["status"]
+    | SetupGateState["toolState"]["validation"]["status"],
+): string {
   switch (value) {
     case "requiresSetup":
       return "Needs setup";
@@ -595,10 +1026,18 @@ function locationSourceLabel(location: ManagedStorageLocation): string {
   return location.source === "override" ? "Custom location" : "App default";
 }
 
-export function supportStatusSummary(support: BdbPlatformSupport): string {
-  return support.status === "supported"
-    ? "This computer matches one of Board's current install-tool downloads."
-    : support.guidance;
+async function pickSinglePath(
+  selection: string | string[] | null,
+): Promise<string | null> {
+  if (selection === null) {
+    return null;
+  }
+
+  if (Array.isArray(selection)) {
+    return selection[0] ?? null;
+  }
+
+  return selection;
 }
 
 export default App;

@@ -3,6 +3,8 @@ import type {
   BdbAcquisitionResult,
   BdbSourcePlan,
   BdbToolState,
+  DesktopSettings,
+  DesktopSettingsInput,
   ManagedStorageOverridesInput,
   ManagedStorageSettings,
   SetupGateState,
@@ -44,6 +46,13 @@ export function loadManagedStorageSettings(): Promise<ManagedStorageSettings> {
 }
 
 /**
+ * Loads the player-facing desktop settings model from the desktop host.
+ */
+export function loadDesktopSettings(): Promise<DesktopSettings> {
+  return invoke<DesktopSettings>("load_desktop_settings");
+}
+
+/**
  * Saves managed storage overrides and returns the updated effective settings.
  */
 export function saveManagedStorageSettings(
@@ -51,5 +60,14 @@ export function saveManagedStorageSettings(
 ): Promise<ManagedStorageSettings> {
   return invoke<ManagedStorageSettings>("save_managed_storage_settings", {
     overrides,
+  });
+}
+
+/**
+ * Saves desktop settings such as scan folders and the managed APK library location.
+ */
+export function saveDesktopSettings(input: DesktopSettingsInput): Promise<DesktopSettings> {
+  return invoke<DesktopSettings>("save_desktop_settings", {
+    input,
   });
 }
