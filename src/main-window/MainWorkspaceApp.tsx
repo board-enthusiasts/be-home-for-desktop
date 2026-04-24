@@ -29,6 +29,7 @@ import type {
   SetupGateState,
   UninstallInstalledTitleResult,
 } from "../desktop/types";
+import { formatBoardInstallToolVersion } from "../desktop/presentation";
 import {
   MAIN_WORKSPACE_NAVIGATE_EVENT,
   MAIN_WORKSPACE_RESCAN_EVENT,
@@ -698,10 +699,9 @@ export default function MainWorkspaceApp() {
   }
 
   const boardStatus = buildBoardStatusPresentation(deviceState.snapshot, setupGateState, deviceState);
-  const bdbVersionValue =
-    deviceState.snapshot?.bdbVersion.value ??
-    setupGateState?.toolState.versionCheck.value ??
-    "Unavailable";
+  const bdbVersionValue = formatBoardInstallToolVersion(
+    deviceState.snapshot?.bdbVersion.value ?? setupGateState?.toolState.versionCheck.value,
+  );
   const boardOsVersionValue = deviceState.snapshot?.boardOsVersion ?? "Unavailable";
 
   if (windowError !== null) {
@@ -772,14 +772,19 @@ export default function MainWorkspaceApp() {
             <span className={`desktop-status-chip desktop-status-chip--${boardStatus.tone}`}>
               {boardStatus.label}
             </span>
-            <button
-              aria-label="What this Board status means"
-              className="desktop-help-chip"
-              title={boardStatus.tooltip}
-              type="button"
-            >
-              ?
-            </button>
+            <div className="desktop-help-chip-wrap">
+              <button
+                aria-describedby="board-status-help-tooltip"
+                aria-label="What this Board status means"
+                className="desktop-help-chip"
+                type="button"
+              >
+                ?
+              </button>
+              <span className="desktop-help-tooltip" id="board-status-help-tooltip" role="tooltip">
+                {boardStatus.tooltip}
+              </span>
+            </div>
             <StatusValueChip label="bdb" value={bdbVersionValue} />
             <StatusValueChip label="Board OS" value={boardOsVersionValue} />
           </section>

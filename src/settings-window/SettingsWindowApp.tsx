@@ -16,6 +16,7 @@ import type {
   DesktopSettingsInput,
   SupportRequestDraft,
 } from "../desktop/types";
+import { formatBoardInstallToolVersion } from "../desktop/presentation";
 
 type SettingsTabId = "locations" | "boardConnection" | "boardTool";
 
@@ -572,13 +573,16 @@ export default function SettingsWindowApp() {
                   <label className="desktop-field">
                     <span className="desktop-field-label">Current version</span>
                     <div className="desktop-readonly-field">
-                      {toolState.versionCheck.value ?? "Not installed yet"}
+                      {formatBoardInstallToolVersion(toolState.versionCheck.value, "Not installed yet")}
                     </div>
                   </label>
                   <label className="desktop-field">
                     <span className="desktop-field-label">Latest version in BE Home</span>
                     <div className="desktop-readonly-field">
-                      {toolState.updateStatus.availableVersion ?? "Not available yet"}
+                      {formatBoardInstallToolVersion(
+                        toolState.updateStatus.availableVersion,
+                        "Not available yet",
+                      )}
                     </div>
                   </label>
                   <label className="desktop-field">
