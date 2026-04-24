@@ -1,45 +1,27 @@
 /**
- * Allowed accent families for a dashboard section card.
+ * Describes whether the app must keep the player inside setup before opening the workspace.
  */
-export type ShellTone = "sunrise" | "forest" | "ocean" | "slate";
+export type SetupGateStatus = "requiresSetup" | "ready" | "unsupported";
 
 /**
- * Describes a small status badge shown inside a dashboard section.
+ * Describes the setup step that should be active based on current host state.
  */
-export interface ShellBadge {
-  label: string;
-  value: string;
-}
+export type SetupRequiredStep = "systemCheck" | "toolSetup" | "workspace";
 
 /**
- * Describes one major workflow area in the desktop shell.
+ * Describes the stable setup-gate contract returned by the desktop host.
  */
-export interface ShellSection {
-  id: string;
-  eyebrow: string;
-  title: string;
-  summary: string;
-  tone: ShellTone;
-  badges: ShellBadge[];
-  bullets: string[];
-}
-
-/**
- * Describes the dashboard content returned by the Tauri host during app bootstrap.
- */
-export interface DesktopShellState {
+export interface SetupGateState {
   appName: string;
   version: string;
   platformLabel: string;
-  introEyebrow: string;
-  introSummary: string;
-  highlights: ShellBadge[];
-  gettingStartedTitle: string;
-  gettingStartedSteps: string[];
-  helpTitle: string;
-  helpSummary: string;
-  helpBullets: string[];
-  sections: ShellSection[];
+  status: SetupGateStatus;
+  requiredStep: SetupRequiredStep;
+  summary: string;
+  guidance: string;
+  toolState: BdbToolState;
+  storage: ManagedStorageSettings;
+  defaultScanFolders: string[];
 }
 
 /**

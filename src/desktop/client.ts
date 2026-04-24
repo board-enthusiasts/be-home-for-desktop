@@ -3,16 +3,16 @@ import type {
   BdbAcquisitionResult,
   BdbSourcePlan,
   BdbToolState,
-  DesktopShellState,
   ManagedStorageOverridesInput,
   ManagedStorageSettings,
+  SetupGateState,
 } from "./types";
 
 /**
- * Loads the current desktop shell state from the Rust host.
+ * Loads the current setup gate state from the Rust host.
  */
-export function loadDesktopShellState(): Promise<DesktopShellState> {
-  return invoke<DesktopShellState>("load_shell_state");
+export function loadSetupGateState(): Promise<SetupGateState> {
+  return invoke<SetupGateState>("load_setup_gate_state");
 }
 
 /**
