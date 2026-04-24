@@ -306,6 +306,9 @@ function App() {
 
   async function handleAcquireBdbTool(
     repair: boolean,
+    options?: {
+      showReviewDefaultsOnReady?: boolean;
+    },
   ): Promise<BdbAcquisitionResult | null> {
     setToolActionState({
       loading: true,
@@ -322,10 +325,12 @@ function App() {
         detail: result.guidance,
         lastOutcome: result.outcome,
       });
+      const shouldShowReviewDefaults =
+        options?.showReviewDefaultsOnReady === true &&
+        result.toolState.status === "runnable" &&
+        (result.outcome === "downloaded" || result.outcome === "repaired");
       await refreshSetupGateState({
-        showReviewDefaultsOnReady:
-          result.toolState.status === "runnable" &&
-          (result.outcome === "downloaded" || result.outcome === "repaired"),
+        showReviewDefaultsOnReady: shouldShowReviewDefaults,
       });
       return result;
     } catch {
@@ -462,7 +467,15 @@ function App() {
   }
 
   async function handleRepairFromSettings(): Promise<void> {
-    const result = await handleAcquireBdbTool(true);
+    setSettingsActionState({
+      loading: true,
+      message: null,
+      detail: null,
+    });
+
+    const result = await handleAcquireBdbTool(true, {
+      showReviewDefaultsOnReady: false,
+    });
     if (result === null) {
       setSettingsActionState({
         loading: false,
@@ -580,8 +593,16 @@ function App() {
                   setupGateState={setupGateState}
                   toolActionState={toolActionState}
                   onBack={() => setSetupViewStep("systemCheck")}
-                  onDownload={() => void handleAcquireBdbTool(false)}
-                  onRepair={() => void handleAcquireBdbTool(true)}
+                  onDownload={() =>
+                    void handleAcquireBdbTool(false, {
+                      showReviewDefaultsOnReady: true,
+                    })
+                  }
+                  onRepair={() =>
+                    void handleAcquireBdbTool(true, {
+                      showReviewDefaultsOnReady: true,
+                    })
+                  }
                   onRefresh={() => void refreshSetupGateState()}
                 />
               ) : null}
@@ -773,7 +794,12 @@ function DeviceWorkspacePanel({
             <StatusSummaryCard
               title="Current bdb version check"
               summary={snapshot.bdbVersion.summary}
-              guidance={snapshot.guidance}
+              guidance={
+                snapshot.bdbVersion.detail ??
+                (snapshot.bdbVersion.status === "available"
+                  ? "BE Home confirmed the managed bdb version during the latest device check."
+                  : "Try refreshing the device check again after repairing bdb if the version is still unavailable.")
+              }
             />
           </>
         )}
@@ -787,6 +813,16 @@ function DeviceWorkspacePanel({
             Once BE Home has the current Board status, this area will turn it into simple recovery
             guidance instead of terminal-style troubleshooting.
           </p>
+          <div className="desktop-action-row">
+            <button
+              className="secondary-button"
+              disabled={deviceStatusState.loading}
+              onClick={onRefresh}
+              type="button"
+            >
+              {deviceStatusState.loading ? "Refreshing..." : "Refresh device check"}
+            </button>
+          </div>
         </article>
       ) : (
         <article
