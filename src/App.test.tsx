@@ -307,6 +307,17 @@ const uninstallSuccessResultFixture = {
   exitCode: 0,
 } as const;
 
+const launchSuccessResultFixture = {
+  status: "launched",
+  summary: "BE Home launched Lucky Dice on Board.",
+  guidance:
+    "The device check will refresh now while the installed-title list stays in place.",
+  detail: "Launched fun.board.luckydice",
+  command:
+    "C:\\Users\\Matt\\AppData\\Local\\Board Enthusiasts\\BE Home for Desktop\\tools\\bdb.exe launch fun.board.luckydice",
+  exitCode: 0,
+} as const;
+
 const installedTitlesAfterUninstallFixture: InstalledTitlesSnapshot = {
   status: "ready",
   summary: "Board reported 1 installed title(s).",
@@ -929,6 +940,57 @@ describe("App", () => {
       expect(screen.queryByText("Lucky Dice")).not.toBeInTheDocument();
     });
     expect(screen.getByText("Family Match")).toBeInTheDocument();
+  });
+
+  it("refreshes only the device state after launching a title", async () => {
+    let deviceStatusReads = 0;
+    let installedTitlesReads = 0;
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "load_setup_gate_state") {
+        return runnableFixture;
+      }
+
+      if (command === "load_desktop_settings") {
+        return desktopSettingsFixture;
+      }
+
+      if (command === "load_device_status_snapshot") {
+        deviceStatusReads += 1;
+        return deviceStatusFixture;
+      }
+
+      if (command === "load_installed_titles_snapshot") {
+        installedTitlesReads += 1;
+        return installedTitlesFixture;
+      }
+
+      if (command === "load_apk_discovery_snapshot") {
+        return apkDiscoveryFixture;
+      }
+
+      if (command === "load_managed_apk_library_snapshot") {
+        return emptyManagedLibraryFixture;
+      }
+
+      if (command === "launch_installed_title_on_board") {
+        return launchSuccessResultFixture;
+      }
+
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Your desktop install space is ready")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Installed on Board/ }));
+
+    fireEvent.click((await screen.findAllByRole("button", { name: "Open on Board" }))[0]);
+
+    expect(await screen.findByText("BE Home launched Lucky Dice on Board.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(deviceStatusReads).toBeGreaterThanOrEqual(2);
+    });
+    expect(installedTitlesReads).toBe(1);
   });
 
   it("shows a friendly host failure message", async () => {

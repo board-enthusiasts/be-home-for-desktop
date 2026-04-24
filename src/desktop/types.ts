@@ -141,6 +141,23 @@ export interface UninstallInstalledTitleResult {
 }
 
 /**
+ * Describes whether one launch attempt completed successfully.
+ */
+export type LaunchInstalledTitleStatus = "launched" | "failed";
+
+/**
+ * Describes the player-facing result of one `bdb launch` attempt.
+ */
+export interface LaunchInstalledTitleResult {
+  status: LaunchInstalledTitleStatus;
+  summary: string;
+  guidance: string;
+  detail: string | null;
+  command: string;
+  exitCode: number | null;
+}
+
+/**
  * Describes the normalized device-connection state for the current `bdb` session.
  */
 export type DeviceStatusKind =
