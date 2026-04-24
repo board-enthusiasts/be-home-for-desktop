@@ -161,3 +161,52 @@ export function saveDesktopSettings(input: DesktopSettingsInput): Promise<Deskto
     input,
   });
 }
+
+/**
+ * Opens or focuses the native setup wizard window.
+ */
+export function openSetupWizardWindow(): Promise<void> {
+  return invoke<void>("open_setup_wizard_window");
+}
+
+/**
+ * Opens or focuses the native settings window.
+ */
+export function openSettingsWindow(): Promise<void> {
+  return invoke<void>("open_settings_window");
+}
+
+/**
+ * Opens or focuses the native About window.
+ */
+export function openAboutWindow(): Promise<void> {
+  return invoke<void>("open_about_window");
+}
+
+/**
+ * Shows the main workspace window after setup is complete.
+ */
+export function showMainWorkspaceWindow(): Promise<void> {
+  return invoke<void>("show_main_workspace_window");
+}
+
+/**
+ * Closes the setup wizard window, or exits the app if setup is still incomplete.
+ */
+export function dismissSetupWizardWindow(): Promise<void> {
+  return invoke<void>("dismiss_setup_wizard_window");
+}
+
+/**
+ * Notifies the main workspace that persisted desktop settings changed in another window.
+ */
+export function emitSettingsUpdated(): Promise<void> {
+  return invoke<void>("emit_settings_updated");
+}
+
+/**
+ * Exits the desktop application immediately.
+ */
+export function exitApplication(): Promise<void> {
+  return invoke<void>("exit_application");
+}
