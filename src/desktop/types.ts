@@ -153,6 +153,19 @@ export interface ManagedStorageLocation {
 }
 
 /**
+ * Describes whether a scan folder comes from the app defaults or was added later.
+ */
+export type ConfiguredScanFolderSource = "default" | "custom";
+
+/**
+ * Describes one active scan folder in the desktop settings model.
+ */
+export interface ConfiguredScanFolder {
+  path: string;
+  source: ConfiguredScanFolderSource;
+}
+
+/**
  * Describes the normalized operating system used for managed-storage defaults.
  */
 export type StorageOperatingSystem = "windows" | "macos" | "linux";
@@ -168,9 +181,29 @@ export interface ManagedStorageSettings {
 }
 
 /**
+ * Describes the player-facing desktop settings model.
+ */
+export interface DesktopSettings {
+  operatingSystem: StorageOperatingSystem;
+  settingsFilePath: string;
+  bdbTools: ManagedStorageLocation;
+  apkLibrary: ManagedStorageLocation;
+  bdbExecutablePath: string;
+  scanFolders: ConfiguredScanFolder[];
+}
+
+/**
  * Represents the persisted override payload accepted by the desktop host.
  */
 export interface ManagedStorageOverridesInput {
   bdbToolsOverride: string | null;
   apkLibraryOverride: string | null;
+}
+
+/**
+ * Describes the desktop settings payload accepted by the host.
+ */
+export interface DesktopSettingsInput {
+  apkLibraryOverride: string | null;
+  scanFolderPaths: string[];
 }

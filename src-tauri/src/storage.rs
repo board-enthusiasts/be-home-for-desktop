@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 const APP_VENDOR_DIRECTORY: &str = "Board Enthusiasts";
 const APP_PRODUCT_DIRECTORY: &str = "BE Home for Desktop";
 const APK_LIBRARY_DIRECTORY: &str = "apk-library";
+const DOWNLOADS_DIRECTORY: &str = "Downloads";
 const SETTINGS_DIRECTORY: &str = "settings";
 const STORAGE_SETTINGS_FILE_NAME: &str = "managed-storage.json";
 const TOOLS_DIRECTORY: &str = "tools";
@@ -28,6 +29,14 @@ pub(crate) enum ManagedStoragePathSource {
     Override,
 }
 
+/// Describes whether a scan folder is part of the app defaults or was added later.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum ConfiguredScanFolderSource {
+    Default,
+    Custom,
+}
+
 /// Describes one managed storage location and how its current path was chosen.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,6 +45,14 @@ pub(crate) struct ManagedStorageLocation {
     pub(crate) override_path: Option<String>,
     pub(crate) effective_path: String,
     pub(crate) source: ManagedStoragePathSource,
+}
+
+/// Describes one active scan folder in the desktop settings model.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ConfiguredScanFolder {
+    pub(crate) path: String,
+    pub(crate) source: ConfiguredScanFolderSource,
 }
 
 /// Describes the current managed storage configuration for the desktop app.
@@ -48,6 +65,18 @@ pub(crate) struct ManagedStorageSettings {
     pub(crate) apk_library: ManagedStorageLocation,
 }
 
+/// Describes the player-facing desktop settings model.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DesktopSettings {
+    pub(crate) operating_system: StorageOperatingSystem,
+    pub(crate) settings_file_path: String,
+    pub(crate) bdb_tools: ManagedStorageLocation,
+    pub(crate) apk_library: ManagedStorageLocation,
+    pub(crate) bdb_executable_path: String,
+    pub(crate) scan_folders: Vec<ConfiguredScanFolder>,
+}
+
 /// Represents the persisted override payload accepted by the desktop host.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,11 +85,20 @@ pub(crate) struct ManagedStorageOverridesInput {
     apk_library_override: Option<String>,
 }
 
+/// Represents the desktop-settings payload accepted by the host.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DesktopSettingsInput {
+    apk_library_override: Option<String>,
+    scan_folder_paths: Vec<String>,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct PersistedManagedStorageOverrides {
+struct PersistedDesktopSettings {
     bdb_tools_override: Option<String>,
     apk_library_override: Option<String>,
+    scan_folder_paths: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug)]
@@ -68,13 +106,21 @@ struct ManagedStorageContext {
     operating_system: StorageOperatingSystem,
     app_data_root: PathBuf,
     settings_file_path: PathBuf,
+    home_directory: Option<PathBuf>,
 }
 
 /// Load the current managed storage settings for the desktop app.
 pub(crate) fn load_managed_storage_settings() -> Result<ManagedStorageSettings, String> {
     let context = current_storage_context()?;
-    let persisted = load_persisted_overrides(&context.settings_file_path)?;
+    let persisted = load_persisted_settings(&context.settings_file_path)?;
     Ok(build_managed_storage_settings(&context, &persisted))
+}
+
+/// Load the player-facing desktop settings for the desktop app.
+pub(crate) fn load_desktop_settings() -> Result<DesktopSettings, String> {
+    let context = current_storage_context()?;
+    let persisted = load_persisted_settings(&context.settings_file_path)?;
+    Ok(build_desktop_settings(&context, &persisted))
 }
 
 /// Resolve the app-owned root directory used for desktop settings, tools, and cached files.
@@ -87,18 +133,30 @@ pub(crate) fn save_managed_storage_settings(
     input: ManagedStorageOverridesInput,
 ) -> Result<ManagedStorageSettings, String> {
     let context = current_storage_context()?;
-    let persisted = PersistedManagedStorageOverrides {
-        bdb_tools_override: normalize_override(input.bdb_tools_override)?,
-        apk_library_override: normalize_override(input.apk_library_override)?,
-    };
+    let mut persisted = load_persisted_settings(&context.settings_file_path)?;
+    persisted.bdb_tools_override = normalize_override(input.bdb_tools_override)?;
+    persisted.apk_library_override = normalize_override(input.apk_library_override)?;
 
-    save_persisted_overrides(&context.settings_file_path, &persisted)?;
+    save_persisted_settings(&context.settings_file_path, &persisted)?;
     Ok(build_managed_storage_settings(&context, &persisted))
+}
+
+/// Save the player-facing desktop settings and return the updated effective model.
+pub(crate) fn save_desktop_settings(
+    input: DesktopSettingsInput,
+) -> Result<DesktopSettings, String> {
+    let context = current_storage_context()?;
+    let mut persisted = load_persisted_settings(&context.settings_file_path)?;
+    persisted.apk_library_override = normalize_override(input.apk_library_override)?;
+    persisted.scan_folder_paths = Some(normalize_scan_folder_paths(input.scan_folder_paths)?);
+
+    save_persisted_settings(&context.settings_file_path, &persisted)?;
+    Ok(build_desktop_settings(&context, &persisted))
 }
 
 fn build_managed_storage_settings(
     context: &ManagedStorageContext,
-    persisted: &PersistedManagedStorageOverrides,
+    persisted: &PersistedDesktopSettings,
 ) -> ManagedStorageSettings {
     let default_bdb_tools_path = context.app_data_root.join(TOOLS_DIRECTORY);
     let default_apk_library_path = context.app_data_root.join(APK_LIBRARY_DIRECTORY);
@@ -110,6 +168,21 @@ fn build_managed_storage_settings(
         settings_file_path: path_to_string(&context.settings_file_path),
         bdb_tools: build_location(default_bdb_tools_path, bdb_tools_override),
         apk_library: build_location(default_apk_library_path, apk_library_override),
+    }
+}
+
+fn build_desktop_settings(
+    context: &ManagedStorageContext,
+    persisted: &PersistedDesktopSettings,
+) -> DesktopSettings {
+    let managed_storage = build_managed_storage_settings(context, persisted);
+    DesktopSettings {
+        operating_system: managed_storage.operating_system,
+        settings_file_path: managed_storage.settings_file_path.clone(),
+        bdb_tools: managed_storage.bdb_tools.clone(),
+        apk_library: managed_storage.apk_library.clone(),
+        bdb_executable_path: resolve_bdb_executable_path(&managed_storage.bdb_tools),
+        scan_folders: build_scan_folders(context, persisted),
     }
 }
 
@@ -131,8 +204,63 @@ fn build_location(default_path: PathBuf, override_path: Option<String>) -> Manag
     }
 }
 
+fn build_scan_folders(
+    context: &ManagedStorageContext,
+    persisted: &PersistedDesktopSettings,
+) -> Vec<ConfiguredScanFolder> {
+    let default_paths = default_scan_folder_paths(context)
+        .into_iter()
+        .map(|path| path_to_string(&path))
+        .collect::<Vec<_>>();
+    let default_keys = default_paths
+        .iter()
+        .map(|path| path_identity_key(path))
+        .collect::<BTreeSet<_>>();
+    let effective_paths = persisted
+        .scan_folder_paths
+        .as_ref()
+        .map(|paths| normalize_loaded_scan_folder_paths(paths.as_slice()))
+        .unwrap_or(default_paths);
+
+    effective_paths
+        .into_iter()
+        .map(|path| ConfiguredScanFolder {
+            source: if default_keys.contains(&path_identity_key(&path)) {
+                ConfiguredScanFolderSource::Default
+            } else {
+                ConfiguredScanFolderSource::Custom
+            },
+            path,
+        })
+        .collect()
+}
+
+fn default_scan_folder_paths(context: &ManagedStorageContext) -> Vec<PathBuf> {
+    context
+        .home_directory
+        .as_ref()
+        .map(|home_directory| vec![home_directory.join(DOWNLOADS_DIRECTORY)])
+        .unwrap_or_default()
+}
+
 fn normalize_loaded_override(value: Option<&str>) -> Option<String> {
     normalize_override(value.map(str::to_owned)).ok().flatten()
+}
+
+fn normalize_loaded_scan_folder_paths(values: &[String]) -> Vec<String> {
+    let mut normalized = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for value in values {
+        if let Ok(Some(path)) = normalize_override(Some(value.clone())) {
+            let key = path_identity_key(&path);
+            if seen.insert(key) {
+                normalized.push(path);
+            }
+        }
+    }
+
+    normalized
 }
 
 fn current_storage_context() -> Result<ManagedStorageContext, String> {
@@ -155,6 +283,7 @@ fn current_storage_context_from_environment(
                 .join(APP_PRODUCT_DIRECTORY)
                 .join(SETTINGS_DIRECTORY)
                 .join(STORAGE_SETTINGS_FILE_NAME),
+            home_directory: resolve_home_directory(environment),
         });
     }
 
@@ -171,6 +300,7 @@ fn current_storage_context_from_environment(
                 .join(SETTINGS_DIRECTORY)
                 .join(STORAGE_SETTINGS_FILE_NAME),
             app_data_root: root,
+            home_directory: Some(home_directory),
         });
     }
 
@@ -185,6 +315,7 @@ fn current_storage_context_from_environment(
             .join(SETTINGS_DIRECTORY)
             .join(STORAGE_SETTINGS_FILE_NAME),
         app_data_root: root,
+        home_directory: Some(home_directory),
     })
 }
 
@@ -200,6 +331,27 @@ fn require_environment_path(
                 "The desktop app could not resolve its managed storage defaults because the `{key}` environment variable was unavailable."
             )
         })
+}
+
+fn resolve_home_directory(environment: &BTreeMap<OsString, OsString>) -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        lookup_environment_value(environment, "USERPROFILE")
+            .or_else(|| {
+                let drive = lookup_environment_value(environment, "HOMEDRIVE")?;
+                let path = lookup_environment_value(environment, "HOMEPATH")?;
+                Some(format!("{}{}", drive.to_string_lossy(), path.to_string_lossy()).into())
+            })
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        lookup_environment_value(environment, "HOME")
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+    }
 }
 
 fn lookup_environment_value(
@@ -220,11 +372,9 @@ fn lookup_environment_value(
     }
 }
 
-fn load_persisted_overrides(
-    settings_file_path: &Path,
-) -> Result<PersistedManagedStorageOverrides, String> {
+fn load_persisted_settings(settings_file_path: &Path) -> Result<PersistedDesktopSettings, String> {
     if !settings_file_path.exists() {
-        return Ok(PersistedManagedStorageOverrides::default());
+        return Ok(PersistedDesktopSettings::default());
     }
 
     let content = fs::read_to_string(settings_file_path).map_err(|error| {
@@ -242,9 +392,9 @@ fn load_persisted_overrides(
     })
 }
 
-fn save_persisted_overrides(
+fn save_persisted_settings(
     settings_file_path: &Path,
-    overrides: &PersistedManagedStorageOverrides,
+    persisted: &PersistedDesktopSettings,
 ) -> Result<(), String> {
     if let Some(parent) = settings_file_path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
@@ -255,8 +405,8 @@ fn save_persisted_overrides(
         })?;
     }
 
-    let content = serde_json::to_string_pretty(overrides)
-        .expect("managed storage overrides should serialize");
+    let content =
+        serde_json::to_string_pretty(persisted).expect("desktop settings should serialize");
     fs::write(settings_file_path, content).map_err(|error| {
         format!(
             "The desktop app could not save its managed storage settings file at `{}`: {error}",
@@ -285,6 +435,50 @@ fn normalize_override(value: Option<String>) -> Result<Option<String>, String> {
     Ok(Some(path_to_string(&path)))
 }
 
+fn normalize_scan_folder_paths(values: Vec<String>) -> Result<Vec<String>, String> {
+    let mut normalized = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for value in values {
+        let Some(path) = normalize_override(Some(value))? else {
+            continue;
+        };
+        let key = path_identity_key(&path);
+        if seen.insert(key) {
+            normalized.push(path);
+        }
+    }
+
+    Ok(normalized)
+}
+
+fn path_identity_key(path: &str) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        path.to_lowercase()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        path.to_string()
+    }
+}
+
+fn resolve_bdb_executable_path(location: &ManagedStorageLocation) -> String {
+    PathBuf::from(&location.effective_path)
+        .join(bdb_executable_file_name())
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn bdb_executable_file_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "bdb.exe"
+    } else {
+        "bdb"
+    }
+}
+
 fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
@@ -292,13 +486,15 @@ fn path_to_string(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_managed_storage_settings, current_storage_context_from_environment,
-        load_persisted_overrides, normalize_override, save_persisted_overrides,
-        ManagedStorageContext, PersistedManagedStorageOverrides, StorageOperatingSystem,
+        build_desktop_settings, build_managed_storage_settings,
+        current_storage_context_from_environment, load_persisted_settings, normalize_override,
+        normalize_scan_folder_paths, save_desktop_settings, save_managed_storage_settings,
+        save_persisted_settings, DesktopSettingsInput, ManagedStorageContext,
+        ManagedStorageOverridesInput, PersistedDesktopSettings, StorageOperatingSystem,
     };
     use std::collections::BTreeMap;
     use std::ffi::OsString;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     fn sample_tools_override_path() -> String {
         if cfg!(target_os = "windows") {
@@ -316,6 +512,14 @@ mod tests {
         }
     }
 
+    fn sample_scan_folder_path() -> String {
+        if cfg!(target_os = "windows") {
+            r"C:\Users\matt\Games".into()
+        } else {
+            "/home/matt/Games".into()
+        }
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn windows_defaults_use_local_app_data() {
@@ -323,6 +527,10 @@ mod tests {
         environment.insert(
             OsString::from("LOCALAPPDATA"),
             OsString::from(r"C:\Users\matt\AppData\Local"),
+        );
+        environment.insert(
+            OsString::from("USERPROFILE"),
+            OsString::from(r"C:\Users\matt"),
         );
 
         let context = current_storage_context_from_environment(&environment)
@@ -335,12 +543,9 @@ mod tests {
                 .join("BE Home for Desktop")
                 .join("tools"),
             PathBuf::from(
-                build_managed_storage_settings(
-                    &context,
-                    &PersistedManagedStorageOverrides::default(),
-                )
-                .bdb_tools
-                .effective_path
+                build_managed_storage_settings(&context, &PersistedDesktopSettings::default(),)
+                    .bdb_tools
+                    .effective_path
             )
         );
     }
@@ -353,6 +558,10 @@ mod tests {
             OsString::from("LocalAppData"),
             OsString::from(r"C:\Users\matt\AppData\Local"),
         );
+        environment.insert(
+            OsString::from("UserProfile"),
+            OsString::from(r"C:\Users\matt"),
+        );
 
         let context = current_storage_context_from_environment(&environment)
             .expect("windows context should resolve");
@@ -364,12 +573,9 @@ mod tests {
                 .join("BE Home for Desktop")
                 .join("tools"),
             PathBuf::from(
-                build_managed_storage_settings(
-                    &context,
-                    &PersistedManagedStorageOverrides::default(),
-                )
-                .bdb_tools
-                .effective_path
+                build_managed_storage_settings(&context, &PersistedDesktopSettings::default(),)
+                    .bdb_tools
+                    .effective_path
             )
         );
     }
@@ -392,12 +598,9 @@ mod tests {
                 .join("BE Home for Desktop")
                 .join("apk-library"),
             PathBuf::from(
-                build_managed_storage_settings(
-                    &context,
-                    &PersistedManagedStorageOverrides::default(),
-                )
-                .apk_library
-                .effective_path
+                build_managed_storage_settings(&context, &PersistedDesktopSettings::default(),)
+                    .apk_library
+                    .effective_path
             )
         );
     }
@@ -420,12 +623,9 @@ mod tests {
                 .join("BE Home for Desktop")
                 .join("tools"),
             PathBuf::from(
-                build_managed_storage_settings(
-                    &context,
-                    &PersistedManagedStorageOverrides::default(),
-                )
-                .bdb_tools
-                .effective_path
+                build_managed_storage_settings(&context, &PersistedDesktopSettings::default(),)
+                    .bdb_tools
+                    .effective_path
             )
         );
     }
@@ -438,24 +638,25 @@ mod tests {
     }
 
     #[test]
+    fn scan_folder_paths_must_be_absolute() {
+        let result = normalize_scan_folder_paths(vec!["relative/path".into()]);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn round_tripped_overrides_preserve_effective_paths() {
         let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
-        let context = ManagedStorageContext {
-            operating_system: StorageOperatingSystem::Linux,
-            app_data_root: temp_directory.path().join("app-data"),
-            settings_file_path: temp_directory
-                .path()
-                .join("settings")
-                .join("managed-storage.json"),
-        };
-        let overrides = PersistedManagedStorageOverrides {
+        let context = sample_context(temp_directory.path());
+        let persisted = PersistedDesktopSettings {
             bdb_tools_override: Some(sample_tools_override_path()),
             apk_library_override: Some(sample_apk_library_override_path()),
+            scan_folder_paths: Some(vec![sample_scan_folder_path()]),
         };
 
-        save_persisted_overrides(&context.settings_file_path, &overrides)
+        save_persisted_settings(&context.settings_file_path, &persisted)
             .expect("settings file should save");
-        let loaded = load_persisted_overrides(&context.settings_file_path)
+        let loaded = load_persisted_settings(&context.settings_file_path)
             .expect("settings file should load");
         let settings = build_managed_storage_settings(&context, &loaded);
 
@@ -463,7 +664,10 @@ mod tests {
             Some(sample_tools_override_path().as_str()),
             settings.bdb_tools.override_path.as_deref()
         );
-        assert_eq!(sample_tools_override_path(), settings.bdb_tools.effective_path);
+        assert_eq!(
+            sample_tools_override_path(),
+            settings.bdb_tools.effective_path
+        );
         assert_eq!(
             Some(sample_apk_library_override_path().as_str()),
             settings.apk_library.override_path.as_deref()
@@ -477,17 +681,11 @@ mod tests {
     #[test]
     fn invalid_loaded_overrides_fall_back_to_defaults() {
         let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
-        let context = ManagedStorageContext {
-            operating_system: StorageOperatingSystem::Linux,
-            app_data_root: temp_directory.path().join("app-data"),
-            settings_file_path: temp_directory
-                .path()
-                .join("settings")
-                .join("managed-storage.json"),
-        };
-        let persisted = PersistedManagedStorageOverrides {
+        let context = sample_context(temp_directory.path());
+        let persisted = PersistedDesktopSettings {
             bdb_tools_override: Some("relative/tools".into()),
             apk_library_override: Some(sample_apk_library_override_path()),
+            scan_folder_paths: Some(vec!["relative/Downloads".into()]),
         };
 
         let settings = build_managed_storage_settings(&context, &persisted);
@@ -501,5 +699,163 @@ mod tests {
             Some(sample_apk_library_override_path().as_str()),
             settings.apk_library.override_path.as_deref()
         );
+    }
+
+    #[test]
+    fn desktop_settings_default_to_downloads_scan_folder() {
+        let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let context = sample_context(temp_directory.path());
+        let settings = build_desktop_settings(&context, &PersistedDesktopSettings::default());
+        let expected_downloads_path = context
+            .home_directory
+            .as_ref()
+            .expect("sample context should include a home directory")
+            .join("Downloads")
+            .to_string_lossy()
+            .into_owned();
+
+        assert_eq!(1, settings.scan_folders.len());
+        assert_eq!(expected_downloads_path, settings.scan_folders[0].path);
+        assert_eq!(
+            "default",
+            serde_json::to_value(&settings.scan_folders[0])
+                .expect("scan folder should serialize")
+                .get("source")
+                .and_then(|value| value.as_str())
+                .expect("source should serialize")
+        );
+    }
+
+    #[test]
+    fn save_desktop_settings_persists_scan_folders_and_library_override() {
+        let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let previous_home = std::env::var_os("HOME");
+        let previous_local_app_data = std::env::var_os("LOCALAPPDATA");
+        let previous_user_profile = std::env::var_os("USERPROFILE");
+
+        if cfg!(target_os = "windows") {
+            unsafe {
+                std::env::set_var("LOCALAPPDATA", temp_directory.path().join("local-app-data"));
+                std::env::set_var("USERPROFILE", temp_directory.path().join("home"));
+            }
+        } else {
+            unsafe {
+                std::env::set_var("HOME", temp_directory.path().join("home"));
+            }
+        }
+
+        let result = save_desktop_settings(DesktopSettingsInput {
+            apk_library_override: Some(sample_apk_library_override_path()),
+            scan_folder_paths: vec![sample_scan_folder_path()],
+        })
+        .expect("desktop settings should save");
+
+        restore_env(
+            previous_home,
+            previous_local_app_data,
+            previous_user_profile,
+        );
+
+        assert_eq!(sample_scan_folder_path(), result.scan_folders[0].path);
+        assert_eq!(
+            Some(sample_apk_library_override_path().as_str()),
+            result.apk_library.override_path.as_deref()
+        );
+        assert!(PathBuf::from(&result.settings_file_path).exists());
+    }
+
+    #[test]
+    fn saving_managed_storage_keeps_existing_scan_folders() {
+        let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let settings_file_path = temp_directory
+            .path()
+            .join("settings")
+            .join("managed-storage.json");
+        let previous_home = std::env::var_os("HOME");
+        let previous_local_app_data = std::env::var_os("LOCALAPPDATA");
+        let previous_user_profile = std::env::var_os("USERPROFILE");
+
+        if cfg!(target_os = "windows") {
+            unsafe {
+                std::env::set_var("LOCALAPPDATA", temp_directory.path().join("local-app-data"));
+                std::env::set_var("USERPROFILE", temp_directory.path().join("home"));
+            }
+        } else {
+            unsafe {
+                std::env::set_var("HOME", temp_directory.path().join("home"));
+            }
+        }
+
+        save_persisted_settings(
+            &settings_file_path,
+            &PersistedDesktopSettings {
+                bdb_tools_override: None,
+                apk_library_override: None,
+                scan_folder_paths: Some(vec![sample_scan_folder_path()]),
+            },
+        )
+        .expect("seed settings should save");
+
+        let updated = save_managed_storage_settings(ManagedStorageOverridesInput {
+            bdb_tools_override: Some(sample_tools_override_path()),
+            apk_library_override: None,
+        })
+        .expect("managed storage settings should save");
+
+        let loaded =
+            load_persisted_settings(&settings_file_path).expect("updated settings should load");
+        restore_env(
+            previous_home,
+            previous_local_app_data,
+            previous_user_profile,
+        );
+
+        assert_eq!(
+            Some(sample_tools_override_path().as_str()),
+            updated.bdb_tools.override_path.as_deref()
+        );
+        assert_eq!(
+            Some(vec![sample_scan_folder_path()]),
+            loaded.scan_folder_paths
+        );
+    }
+
+    fn sample_context(root: &Path) -> ManagedStorageContext {
+        let home = if cfg!(target_os = "windows") {
+            root.join("home")
+        } else {
+            PathBuf::from("/home/matt")
+        };
+
+        ManagedStorageContext {
+            operating_system: StorageOperatingSystem::Linux,
+            app_data_root: root.join("app-data"),
+            settings_file_path: root.join("settings").join("managed-storage.json"),
+            home_directory: Some(home),
+        }
+    }
+
+    fn restore_env(
+        previous_home: Option<OsString>,
+        previous_local_app_data: Option<OsString>,
+        previous_user_profile: Option<OsString>,
+    ) {
+        if cfg!(target_os = "windows") {
+            unsafe {
+                restore_var("LOCALAPPDATA", previous_local_app_data);
+                restore_var("USERPROFILE", previous_user_profile);
+            }
+        } else {
+            unsafe {
+                restore_var("HOME", previous_home);
+            }
+        }
+    }
+
+    unsafe fn restore_var(key: &str, value: Option<OsString>) {
+        match value {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
     }
 }
