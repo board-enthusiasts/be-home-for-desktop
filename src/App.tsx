@@ -1,8 +1,10 @@
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useState } from "react";
 import {
   acquireBdbTool,
   loadDesktopSettings,
+  loadDeviceStatusSnapshot,
   loadSetupGateState,
   saveDesktopSettings,
 } from "./desktop/client";
@@ -10,6 +12,7 @@ import type {
   BdbAcquisitionResult,
   DesktopSettings,
   DesktopSettingsInput,
+  DeviceStatusSnapshot,
   ManagedStorageLocation,
   SetupGateState,
 } from "./desktop/types";
@@ -25,6 +28,8 @@ interface WorkspaceSection {
   summary: string;
   bullets: string[];
 }
+
+const DEFAULT_DEVICE_POLL_INTERVAL_MS = 5_000;
 
 const workspaceSections: WorkspaceSection[] = [
   {
@@ -107,6 +112,21 @@ function App() {
     message: null,
     detail: null,
   });
+  const [deviceStatusState, setDeviceStatusState] = useState<{
+    loading: boolean;
+    snapshot: DeviceStatusSnapshot | null;
+    errorMessage: string | null;
+    errorDetail: string | null;
+  }>({
+    loading: false,
+    snapshot: null,
+    errorMessage: null,
+    errorDetail: null,
+  });
+  const [windowFocused, setWindowFocused] = useState(true);
+  const [documentVisible, setDocumentVisible] = useState(
+    typeof document === "undefined" ? true : document.visibilityState !== "hidden",
+  );
   const [activeWorkspaceSection, setActiveWorkspaceSection] =
     useState<WorkspaceSectionId>("device");
 
@@ -132,6 +152,102 @@ function App() {
       workspaceSections[0],
     [activeWorkspaceSection],
   );
+  const devicePollIntervalMs =
+    deviceStatusState.snapshot?.pollIntervalMs ?? DEFAULT_DEVICE_POLL_INTERVAL_MS;
+  const devicePollingActive = setupGateState?.status === "ready" && documentVisible && windowFocused;
+
+  const refreshDeviceStatus = useEffectEvent(
+    async (source: "initial" | "poll" | "manual" = "manual"): Promise<void> => {
+      if (setupGateState?.status !== "ready") {
+        return;
+      }
+
+      if (source !== "poll") {
+        setDeviceStatusState((previous) => ({
+          ...previous,
+          loading: true,
+          errorMessage: null,
+          errorDetail: null,
+        }));
+      }
+
+      try {
+        const snapshot = await loadDeviceStatusSnapshot();
+        setDeviceStatusState({
+          loading: false,
+          snapshot,
+          errorMessage: null,
+          errorDetail: null,
+        });
+      } catch {
+        setDeviceStatusState((previous) => ({
+          loading: false,
+          snapshot: previous.snapshot,
+          errorMessage: "BE Home couldn't refresh the latest Board connection check.",
+          errorDetail:
+            source === "poll"
+              ? "We'll keep trying again while the desktop window stays visible."
+              : "Please try refreshing the device check again in a moment.",
+        }));
+      }
+    },
+  );
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      setDocumentVisible(document.visibilityState !== "hidden");
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    let removeFocusListener: (() => void) | null = null;
+    void getCurrentWindow()
+      .onFocusChanged(({ payload }) => {
+        setWindowFocused(payload);
+      })
+      .then((unlisten) => {
+        removeFocusListener = unlisten;
+      })
+      .catch(() => {
+        setWindowFocused(true);
+      });
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      if (removeFocusListener !== null) {
+        removeFocusListener();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (setupGateState?.status !== "ready") {
+      setDeviceStatusState({
+        loading: false,
+        snapshot: null,
+        errorMessage: null,
+        errorDetail: null,
+      });
+      return;
+    }
+
+    if (!documentVisible || !windowFocused) {
+      return;
+    }
+
+    void refreshDeviceStatus("initial");
+    const timer = window.setInterval(() => {
+      void refreshDeviceStatus("poll");
+    }, devicePollIntervalMs);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [
+    devicePollIntervalMs,
+    documentVisible,
+    setupGateState?.status,
+    windowFocused,
+  ]);
 
   async function refreshSetupGateState(options?: {
     showReviewDefaultsOnReady?: boolean;
@@ -501,6 +617,13 @@ function App() {
                   onResetApkLibraryLocation={() => void handleResetApkLibraryLocation()}
                   onRepairBdb={() => void handleRepairFromSettings()}
                 />
+              ) : activeWorkspaceSection === "device" ? (
+                <DeviceWorkspacePanel
+                  deviceStatusState={deviceStatusState}
+                  pollingActive={devicePollingActive}
+                  setupGateState={setupGateState}
+                  onRefresh={() => void refreshDeviceStatus("manual")}
+                />
               ) : (
                 <>
                   <article className="panel desktop-workspace-panel">
@@ -540,6 +663,137 @@ function App() {
         )}
       </section>
     </main>
+  );
+}
+
+interface DeviceWorkspacePanelProps {
+  deviceStatusState: {
+    loading: boolean;
+    snapshot: DeviceStatusSnapshot | null;
+    errorMessage: string | null;
+    errorDetail: string | null;
+  };
+  pollingActive: boolean;
+  setupGateState: SetupGateState;
+  onRefresh: () => void;
+}
+
+function DeviceWorkspacePanel({
+  deviceStatusState,
+  pollingActive,
+  setupGateState,
+  onRefresh,
+}: DeviceWorkspacePanelProps) {
+  const snapshot = deviceStatusState.snapshot;
+
+  return (
+    <>
+      <article className="panel desktop-workspace-panel">
+        <div className="eyebrow">Board connection</div>
+        <h2>Keep the latest device check easy to trust.</h2>
+        <p className="panel-description">
+          BE Home uses the managed Board install tool to confirm whether your Board is nearby,
+          ready, and worth keeping in view while the app is open.
+        </p>
+
+        {snapshot !== null ? (
+          <article
+            className={`desktop-status-band desktop-status-band--${deviceStatusTone(snapshot.status)}`}
+          >
+            <span className="desktop-status-band-label">
+              {deviceStatusLabel(snapshot.status)}
+            </span>
+            <h3>{snapshot.summary}</h3>
+            <p>{snapshot.guidance}</p>
+          </article>
+        ) : null}
+
+        {deviceStatusState.errorMessage !== null ? (
+          <article className="desktop-inline-message desktop-inline-message--warning">
+            <h3>{deviceStatusState.errorMessage}</h3>
+            {deviceStatusState.errorDetail !== null ? (
+              <p>{deviceStatusState.errorDetail}</p>
+            ) : null}
+          </article>
+        ) : null}
+
+        {snapshot === null ? (
+          <article className="desktop-inline-card">
+            <h3>Loading the latest Board connection check.</h3>
+            <p>
+              BE Home is asking the managed install tool for its current version and Board
+              connection state.
+            </p>
+          </article>
+        ) : (
+          <>
+            <dl className="desktop-detail-grid">
+              <DetailRow
+                label="Connection state"
+                value={deviceStatusLabel(snapshot.status)}
+              />
+              <DetailRow
+                label="bdb version"
+                value={snapshot.bdbVersion.value ?? "Version not available yet"}
+              />
+              <DetailRow
+                label="Live refresh"
+                value={
+                  pollingActive
+                    ? `Every ${Math.floor(snapshot.pollIntervalMs / 1000)} seconds while this window stays visible`
+                    : "Paused until the desktop window is visible and focused again"
+                }
+              />
+              <DetailRow
+                label="Managed bdb location"
+                value={setupGateState.toolState.executablePath}
+              />
+            </dl>
+
+            <StatusSummaryCard
+              title="Current bdb version check"
+              summary={snapshot.bdbVersion.summary}
+              guidance={snapshot.detail ?? snapshot.guidance}
+            />
+          </>
+        )}
+
+        <div className="desktop-action-row">
+          <button
+            className="secondary-button"
+            disabled={deviceStatusState.loading}
+            onClick={onRefresh}
+            type="button"
+          >
+            {deviceStatusState.loading ? "Refreshing..." : "Refresh device check"}
+          </button>
+        </div>
+      </article>
+
+      <article className="panel desktop-workspace-panel">
+        <div className="eyebrow">Managed tool</div>
+        <h2>Keep the session details and fallback path nearby.</h2>
+        <p className="panel-description">
+          The desktop app keeps the Board install tool in a managed location so connection checks,
+          installs, and repairs all point to the same trusted copy.
+        </p>
+        <dl className="desktop-detail-grid">
+          <DetailRow label="Tool state" value={setupGateState.toolState.summary} />
+          <DetailRow
+            label="Runnable check"
+            value={setupGateState.toolState.validation.summary}
+          />
+          <DetailRow
+            label="Source manifest"
+            value={setupGateState.toolState.sourcePlan.manifestSource}
+          />
+          <DetailRow
+            label="Managed tool folder"
+            value={setupGateState.toolState.storage.effectivePath}
+          />
+        </dl>
+      </article>
+    </>
   );
 }
 
@@ -1024,6 +1278,42 @@ function statusLabel(
 
 function locationSourceLabel(location: ManagedStorageLocation): string {
   return location.source === "override" ? "Custom location" : "App default";
+}
+
+function deviceStatusLabel(value: DeviceStatusSnapshot["status"]): string {
+  switch (value) {
+    case "toolMissing":
+      return "Tool missing";
+    case "toolBroken":
+      return "Tool needs repair";
+    case "unsupportedHost":
+      return "Unsupported host";
+    case "boardDisconnected":
+      return "Board disconnected";
+    case "boardConnected":
+      return "Board connected";
+    case "executionError":
+      return "Needs retry";
+    default:
+      return value;
+  }
+}
+
+function deviceStatusTone(
+  value: DeviceStatusSnapshot["status"],
+): "success" | "warning" | "neutral" {
+  switch (value) {
+    case "boardConnected":
+      return "success";
+    case "toolMissing":
+    case "toolBroken":
+    case "boardDisconnected":
+    case "executionError":
+      return "warning";
+    case "unsupportedHost":
+    default:
+      return "neutral";
+  }
 }
 
 async function pickSinglePath(

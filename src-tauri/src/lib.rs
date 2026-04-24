@@ -1,5 +1,6 @@
 mod bdb;
 mod bdb_tool;
+mod device;
 mod setup;
 mod storage;
 
@@ -21,6 +22,11 @@ fn load_bdb_tool_state() -> Result<bdb_tool::BdbToolState, String> {
 #[tauri::command]
 fn acquire_bdb_tool(repair: bool) -> Result<bdb_tool::BdbAcquisitionResult, String> {
     bdb_tool::acquire_current_bdb_tool(repair)
+}
+
+#[tauri::command]
+fn load_device_status_snapshot() -> Result<device::DeviceStatusSnapshot, String> {
+    device::load_current_device_status_snapshot()
 }
 
 #[tauri::command]
@@ -57,6 +63,7 @@ pub fn run() {
             load_bdb_source_plan,
             load_bdb_tool_state,
             acquire_bdb_tool,
+            load_device_status_snapshot,
             load_managed_storage_settings,
             load_desktop_settings,
             save_managed_storage_settings,
@@ -139,6 +146,22 @@ mod tests {
         assert!(serialized.get("sourcePlan").is_some());
         assert!(serialized
             .get("validation")
+            .and_then(|value| value.get("status"))
+            .is_some());
+    }
+
+    #[test]
+    fn device_status_snapshot_serializes_the_runtime_contract() {
+        let snapshot =
+            super::load_device_status_snapshot().expect("device status snapshot should load");
+        let serialized =
+            serde_json::to_value(snapshot).expect("device status snapshot should serialize");
+
+        assert!(serialized.get("status").is_some());
+        assert!(serialized.get("guidance").is_some());
+        assert!(serialized.get("pollIntervalMs").is_some());
+        assert!(serialized
+            .get("bdbVersion")
             .and_then(|value| value.get("status"))
             .is_some());
     }

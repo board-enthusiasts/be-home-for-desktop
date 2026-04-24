@@ -25,6 +25,46 @@ export interface SetupGateState {
 }
 
 /**
+ * Describes the normalized device-connection state for the current `bdb` session.
+ */
+export type DeviceStatusKind =
+  | "toolMissing"
+  | "toolBroken"
+  | "unsupportedHost"
+  | "boardDisconnected"
+  | "boardConnected"
+  | "executionError";
+
+/**
+ * Describes whether BE Home could read a friendly `bdb version` string.
+ */
+export type BdbVersionStatus = "available" | "unavailable";
+
+/**
+ * Describes the latest `bdb version` check for the current session.
+ */
+export interface BdbVersionDetails {
+  status: BdbVersionStatus;
+  command: string;
+  value: string | null;
+  exitCode: number | null;
+  summary: string;
+  detail: string | null;
+}
+
+/**
+ * Describes the current Board connection state plus related `bdb` diagnostics.
+ */
+export interface DeviceStatusSnapshot {
+  status: DeviceStatusKind;
+  summary: string;
+  guidance: string;
+  detail: string | null;
+  pollIntervalMs: number;
+  bdbVersion: BdbVersionDetails;
+}
+
+/**
  * Describes whether the current machine matches a supported Board `bdb` target.
  */
 export type BdbSupportStatus = "supported" | "unsupported";

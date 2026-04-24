@@ -1,12 +1,25 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-import type { DesktopSettings, SetupGateState } from "./desktop/types";
+import type {
+  DesktopSettings,
+  DeviceStatusSnapshot,
+  SetupGateState,
+} from "./desktop/types";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
+}));
+
+const onFocusChangedMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: vi.fn(() => ({
+    onFocusChanged: onFocusChangedMock,
+  })),
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -14,6 +27,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 }));
 
 const invokeMock = vi.mocked(invoke);
+const getCurrentWindowMock = vi.mocked(getCurrentWindow);
 const openMock = vi.mocked(open);
 
 const missingToolFixture: SetupGateState = {
@@ -122,9 +136,29 @@ const desktopSettingsFixture: DesktopSettings = {
   ],
 };
 
+const deviceStatusFixture: DeviceStatusSnapshot = {
+  status: "boardConnected",
+  summary: "Board connection looks ready.",
+  guidance:
+    "You can keep using the desktop workspace while BE Home refreshes the connection in the background.",
+  detail: "Board connected and ready.",
+  pollIntervalMs: 5000,
+  bdbVersion: {
+    status: "available",
+    command: "bdb version",
+    value: "bdb 0.19.0",
+    exitCode: 0,
+    summary: "BE Home is using `bdb 0.19.0`.",
+    detail: null,
+  },
+};
+
 describe("App", () => {
   beforeEach(() => {
     invokeMock.mockReset();
+    getCurrentWindowMock.mockClear();
+    onFocusChangedMock.mockReset();
+    onFocusChangedMock.mockResolvedValue(() => undefined);
     openMock.mockReset();
   });
 
@@ -155,6 +189,10 @@ describe("App", () => {
         return desktopSettingsFixture;
       }
 
+      if (command === "load_device_status_snapshot") {
+        return deviceStatusFixture;
+      }
+
       throw new Error(`Unexpected command: ${command}`);
     });
 
@@ -162,7 +200,8 @@ describe("App", () => {
 
     expect(await screen.findByText("Your desktop install space is ready")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Device/ })).toBeInTheDocument();
-    expect(screen.getByText("Board's install tool is already checked.")).toBeInTheDocument();
+    expect(await screen.findByText("Board connection looks ready.")).toBeInTheDocument();
+    expect(screen.getByText("bdb 0.19.0")).toBeInTheDocument();
   });
 
   it("shows the review-defaults step after a successful bdb download", async () => {
@@ -175,6 +214,10 @@ describe("App", () => {
 
       if (command === "load_desktop_settings") {
         return desktopSettingsFixture;
+      }
+
+      if (command === "load_device_status_snapshot") {
+        return deviceStatusFixture;
       }
 
       if (command === "acquire_bdb_tool") {
@@ -209,6 +252,10 @@ describe("App", () => {
         return desktopSettingsFixture;
       }
 
+      if (command === "load_device_status_snapshot") {
+        return deviceStatusFixture;
+      }
+
       if (command === "save_desktop_settings") {
         expect(args).toEqual({
           input: {
@@ -241,6 +288,38 @@ describe("App", () => {
 
     expect(await screen.findByText("C:\\Users\\Matt\\Games")).toBeInTheDocument();
     expect(screen.getByText("BE Home added a new scan folder.")).toBeInTheDocument();
+  });
+
+  it("polls device status while the workspace stays visible", async () => {
+    let deviceStatusReads = 0;
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "load_setup_gate_state") {
+        return runnableFixture;
+      }
+
+      if (command === "load_desktop_settings") {
+        return desktopSettingsFixture;
+      }
+
+      if (command === "load_device_status_snapshot") {
+        deviceStatusReads += 1;
+        return {
+          ...deviceStatusFixture,
+          pollIntervalMs: 20,
+        };
+      }
+
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Board connection looks ready.")).toBeInTheDocument();
+    expect(deviceStatusReads).toBeGreaterThanOrEqual(1);
+
+    await waitFor(() => {
+      expect(deviceStatusReads).toBeGreaterThanOrEqual(2);
+    });
   });
 
   it("shows a friendly host failure message", async () => {
