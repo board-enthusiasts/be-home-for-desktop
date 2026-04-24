@@ -522,7 +522,7 @@ mod tests {
         let downloads = temp_directory.path().join("Downloads");
         let nested = downloads.join("nested");
         fs::create_dir_all(&nested).expect("nested folder should exist");
-        fs::write(nested.join("LuckyDice.apk"), "apk").expect("apk should exist");
+        write_apk(&nested.join("LuckyDice.apk"), true, "fun.board.luckydice");
         symlink(&downloads, nested.join("loop")).expect("directory symlink should exist");
 
         let snapshot = build_apk_discovery_snapshot(vec![downloads.to_string_lossy().into_owned()]);
