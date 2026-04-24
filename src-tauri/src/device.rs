@@ -263,26 +263,44 @@ fn load_bdb_version<P: ProcessRunner>(
 
     match runner.run(executable_path, &[BDB_VERSION_ARGUMENT]) {
         Ok(output) => {
-            let version_value = first_non_empty_line(&combined_output_text(&output));
-            match version_value {
-                Some(version_value) => BdbVersionDetails {
-                    status: BdbVersionStatus::Available,
-                    command,
-                    value: Some(version_value.clone()),
-                    exit_code: output.exit_code,
-                    summary: format!("BE Home is using `{version_value}`."),
-                    detail: None,
-                },
-                None => BdbVersionDetails {
+            let combined_text = combined_output_text(&output);
+            if output.exit_code == Some(0) {
+                match first_non_empty_line(&combined_text) {
+                    Some(version_value) => BdbVersionDetails {
+                        status: BdbVersionStatus::Available,
+                        command,
+                        value: Some(version_value.clone()),
+                        exit_code: output.exit_code,
+                        summary: format!("BE Home is using `{version_value}`."),
+                        detail: None,
+                    },
+                    None => BdbVersionDetails {
+                        status: BdbVersionStatus::Unavailable,
+                        command,
+                        value: None,
+                        exit_code: output.exit_code,
+                        summary: "BE Home could not read a friendly version string from bdb."
+                            .into(),
+                        detail: Some(
+                            "The tool opened, but it did not return a readable version line."
+                                .into(),
+                        ),
+                    },
+                }
+            } else {
+                BdbVersionDetails {
                     status: BdbVersionStatus::Unavailable,
                     command,
                     value: None,
                     exit_code: output.exit_code,
-                    summary: "BE Home could not read a friendly version string from bdb.".into(),
-                    detail: Some(
-                        "The tool opened, but it did not return a readable version line.".into(),
-                    ),
-                },
+                    summary: "BE Home could not confirm which bdb version is loaded right now."
+                        .into(),
+                    detail: Some(if combined_text.is_empty() {
+                        "bdb exited before it shared a readable version line.".into()
+                    } else {
+                        combined_text
+                    }),
+                }
             }
         }
         Err(failure) => BdbVersionDetails {
@@ -439,6 +457,30 @@ mod tests {
         assert_eq!(
             "Connect your Board with USB, unlock it if needed, then choose refresh.",
             snapshot.guidance
+        );
+    }
+
+    #[test]
+    fn failed_version_command_does_not_masquerade_as_an_available_version() {
+        let snapshot = runnable_snapshot_with_runner(StaticRunner {
+            version: Ok(ProcessRunOutput {
+                exit_code: Some(1),
+                stdout: String::new(),
+                stderr: "version probe failed".into(),
+            }),
+            status: Ok(ProcessRunOutput {
+                exit_code: Some(0),
+                stdout: "Board connected and ready.".into(),
+                stderr: String::new(),
+            }),
+        });
+
+        assert_eq!(DeviceStatusKind::BoardConnected, snapshot.status);
+        assert_eq!(BdbVersionStatus::Unavailable, snapshot.bdb_version.status);
+        assert_eq!(None, snapshot.bdb_version.value);
+        assert_eq!(
+            Some("version probe failed"),
+            snapshot.bdb_version.detail.as_deref()
         );
     }
 

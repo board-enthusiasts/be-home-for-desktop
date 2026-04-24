@@ -375,7 +375,7 @@ fn normalize_uninstall_output(
     let normalized_output = combined_output.to_ascii_lowercase();
     let (guidance, detail) = if contains_any(
         &normalized_output,
-        &["not installed", "not found", "unknown package", "no such package"],
+        &["not installed", "unknown package", "no such package", "package not found"],
     ) {
         (
             "Board says this title is not installed anymore. Refresh the installed list and try again if you still need to clean it up."
@@ -716,6 +716,27 @@ mod tests {
 
         assert_eq!(UninstallInstalledTitleStatus::Failed, result.status);
         assert!(result.guidance.contains("not installed anymore"));
+    }
+
+    #[test]
+    fn uninstall_does_not_treat_device_not_found_as_a_missing_package() {
+        let result = uninstall_installed_title_with_runner(
+            &sample_runnable_tool_state(),
+            &sample_device_status(device::DeviceStatusKind::BoardConnected),
+            "fun.board.luckydice",
+            "Lucky Dice",
+            &MockProcessRunner {
+                outcome: Ok(ProcessRunOutput {
+                    exit_code: Some(1),
+                    stdout: String::new(),
+                    stderr: "device not found".into(),
+                }),
+            },
+        );
+
+        assert_eq!(UninstallInstalledTitleStatus::Failed, result.status);
+        assert!(result.guidance.contains("Keep Board connected"));
+        assert!(!result.guidance.contains("not installed anymore"));
     }
 
     #[test]

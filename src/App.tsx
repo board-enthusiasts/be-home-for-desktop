@@ -1,6 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useEffect, useEffectEvent, useMemo, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import {
   acquireBdbTool,
   importApkToManagedLibrary,
@@ -203,6 +203,7 @@ function App() {
     detail: null,
     lastStatus: null,
   });
+  const apkInstallInFlightRef = useRef(false);
   const [installedTitleActionState, setInstalledTitleActionState] = useState<{
     actionPackage: string | null;
     confirmPackage: string | null;
@@ -538,6 +539,9 @@ function App() {
 
   async function handleAcquireBdbTool(
     repair: boolean,
+    options?: {
+      showReviewDefaultsOnReady?: boolean;
+    },
   ): Promise<BdbAcquisitionResult | null> {
     setToolActionState({
       loading: true,
@@ -556,8 +560,9 @@ function App() {
       });
       await refreshSetupGateState({
         showReviewDefaultsOnReady:
-          result.toolState.status === "runnable" &&
-          (result.outcome === "downloaded" || result.outcome === "repaired"),
+          options?.showReviewDefaultsOnReady ??
+          (result.toolState.status === "runnable" &&
+            (result.outcome === "downloaded" || result.outcome === "repaired")),
       });
       return result;
     } catch {
@@ -694,7 +699,15 @@ function App() {
   }
 
   async function handleRepairFromSettings(): Promise<void> {
-    const result = await handleAcquireBdbTool(true);
+    setSettingsActionState({
+      loading: true,
+      message: null,
+      detail: null,
+    });
+
+    const result = await handleAcquireBdbTool(true, {
+      showReviewDefaultsOnReady: false,
+    });
     if (result === null) {
       setSettingsActionState({
         loading: false,
@@ -749,6 +762,11 @@ function App() {
   async function handleInstallApk(
     apkPath: string,
   ): Promise<InstallApkResult | null> {
+    if (apkInstallInFlightRef.current) {
+      return null;
+    }
+
+    apkInstallInFlightRef.current = true;
     setApkInstallState({
       actionPath: apkPath,
       message: null,
@@ -771,14 +789,19 @@ function App() {
       }
 
       return result;
-    } catch {
+    } catch (error) {
       setApkInstallState({
         actionPath: null,
         message: "BE Home couldn't finish that install request just yet.",
-        detail: "Please keep Board connected and try the same APK again in a moment.",
+        detail: extractActionErrorDetail(
+          error,
+          "Please keep Board connected and try the same APK again in a moment.",
+        ),
         lastStatus: "failed",
       });
       return null;
+    } finally {
+      apkInstallInFlightRef.current = false;
     }
   }
 
@@ -1161,8 +1184,10 @@ function ApkLibraryWorkspacePanel({
   const librarySnapshot = managedLibraryState.snapshot;
   const scanFolderCount = desktopSettings?.scanFolders.length ?? 0;
   const importedSourcePathKeys = new Set(
-    managedLibraryState.snapshot?.items.map((item) => pathIdentityKey(item.originalSourcePath)) ??
-      [],
+    managedLibraryState.snapshot?.items.flatMap((item) => [
+      pathIdentityKey(item.originalSourcePath),
+      pathIdentityKey(item.managedPath),
+    ]) ?? [],
   );
   const manualCandidateImported =
     apkDiscoveryState.manualCandidate !== null &&
@@ -1277,7 +1302,7 @@ function ApkLibraryWorkspacePanel({
             <div className="desktop-action-row">
               <button
                 className="primary-button"
-                disabled={apkInstallState.actionPath === apkDiscoveryState.manualCandidate.sourcePath}
+                disabled={apkInstallState.actionPath !== null}
                 onClick={() => onInstallApk(apkDiscoveryState.manualCandidate!.sourcePath)}
                 type="button"
               >
@@ -1336,7 +1361,7 @@ function ApkLibraryWorkspacePanel({
                   <div className="desktop-inline-action-stack">
                     <button
                       className="primary-button desktop-inline-button"
-                      disabled={apkInstallState.actionPath === candidate.sourcePath}
+                      disabled={apkInstallState.actionPath !== null}
                       onClick={() => onInstallApk(candidate.sourcePath)}
                       type="button"
                     >
@@ -1465,7 +1490,7 @@ function ApkLibraryWorkspacePanel({
                   </p>
                   <button
                     className="primary-button desktop-inline-button"
-                    disabled={apkInstallState.actionPath === item.managedPath}
+                    disabled={apkInstallState.actionPath !== null}
                     onClick={() => onInstallApk(item.managedPath)}
                     type="button"
                   >
@@ -1763,7 +1788,7 @@ function DeviceWorkspacePanel({
             <StatusSummaryCard
               title="Current bdb version check"
               summary={snapshot.bdbVersion.summary}
-              guidance={snapshot.guidance}
+              guidance={snapshot.bdbVersion.detail ?? snapshot.guidance}
             />
           </>
         )}
@@ -1772,11 +1797,27 @@ function DeviceWorkspacePanel({
       {guidanceContent === null ? (
         <article className="panel desktop-workspace-panel">
           <div className="eyebrow">Recovery help</div>
-          <h2>We’ll load the right next steps after the first device check.</h2>
+          <h2>
+            {deviceStatusState.errorMessage !== null
+              ? "Try the device check again."
+              : "We’ll load the right next steps after the first device check."}
+          </h2>
           <p className="panel-description">
-            Once BE Home has the current Board status, this area will turn it into simple recovery
-            guidance instead of terminal-style troubleshooting.
+            {deviceStatusState.errorDetail ??
+              "Once BE Home has the current Board status, this area will turn it into simple recovery guidance instead of terminal-style troubleshooting."}
           </p>
+          {deviceStatusState.errorMessage !== null ? (
+            <div className="desktop-action-row">
+              <button
+                className="primary-button"
+                disabled={deviceStatusState.loading}
+                onClick={onRefresh}
+                type="button"
+              >
+                {deviceStatusState.loading ? "Refreshing..." : "Refresh device check"}
+              </button>
+            </div>
+          ) : null}
         </article>
       ) : (
         <article
@@ -2583,6 +2624,18 @@ function formatFileSize(value: number): string {
   }
 
   return `${value} bytes`;
+}
+
+function extractActionErrorDetail(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+
+  if (typeof error === "string" && error.trim().length > 0) {
+    return error;
+  }
+
+  return fallback;
 }
 
 async function pickSinglePath(
