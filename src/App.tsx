@@ -176,6 +176,9 @@ function App() {
 
   async function handleAcquireBdbTool(
     repair: boolean,
+    options?: {
+      showReviewDefaultsOnReady?: boolean;
+    },
   ): Promise<BdbAcquisitionResult | null> {
     setToolActionState({
       loading: true,
@@ -192,10 +195,12 @@ function App() {
         detail: result.guidance,
         lastOutcome: result.outcome,
       });
+      const shouldShowReviewDefaults =
+        options?.showReviewDefaultsOnReady === true &&
+        result.toolState.status === "runnable" &&
+        (result.outcome === "downloaded" || result.outcome === "repaired");
       await refreshSetupGateState({
-        showReviewDefaultsOnReady:
-          result.toolState.status === "runnable" &&
-          (result.outcome === "downloaded" || result.outcome === "repaired"),
+        showReviewDefaultsOnReady: shouldShowReviewDefaults,
       });
       return result;
     } catch {
@@ -332,7 +337,15 @@ function App() {
   }
 
   async function handleRepairFromSettings(): Promise<void> {
-    const result = await handleAcquireBdbTool(true);
+    setSettingsActionState({
+      loading: true,
+      message: null,
+      detail: null,
+    });
+
+    const result = await handleAcquireBdbTool(true, {
+      showReviewDefaultsOnReady: false,
+    });
     if (result === null) {
       setSettingsActionState({
         loading: false,
@@ -450,8 +463,16 @@ function App() {
                   setupGateState={setupGateState}
                   toolActionState={toolActionState}
                   onBack={() => setSetupViewStep("systemCheck")}
-                  onDownload={() => void handleAcquireBdbTool(false)}
-                  onRepair={() => void handleAcquireBdbTool(true)}
+                  onDownload={() =>
+                    void handleAcquireBdbTool(false, {
+                      showReviewDefaultsOnReady: true,
+                    })
+                  }
+                  onRepair={() =>
+                    void handleAcquireBdbTool(true, {
+                      showReviewDefaultsOnReady: true,
+                    })
+                  }
                   onRefresh={() => void refreshSetupGateState()}
                 />
               ) : null}

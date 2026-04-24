@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -241,6 +241,67 @@ describe("App", () => {
 
     expect(await screen.findByText("C:\\Users\\Matt\\Games")).toBeInTheDocument();
     expect(screen.getByText("BE Home added a new scan folder.")).toBeInTheDocument();
+  });
+
+  it("keeps settings repairs inside the workspace and disables repeat submits", async () => {
+    let resolveRepair!: (value: {
+      outcome: "repaired";
+      summary: string;
+      guidance: string;
+      toolState: SetupGateState["toolState"];
+    }) => void;
+    const repairPromise = new Promise<{
+      outcome: "repaired";
+      summary: string;
+      guidance: string;
+      toolState: SetupGateState["toolState"];
+    }>((resolve) => {
+      resolveRepair = resolve;
+    });
+
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "load_setup_gate_state") {
+        return runnableFixture;
+      }
+
+      if (command === "load_desktop_settings") {
+        return desktopSettingsFixture;
+      }
+
+      if (command === "acquire_bdb_tool") {
+        return repairPromise;
+      }
+
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Your desktop install space is ready")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Settings/ }));
+    expect(await screen.findByText("Keep folders and storage understandable.")).toBeInTheDocument();
+
+    const repairButton = screen.getByRole("button", { name: "Repair bdb" });
+    fireEvent.click(repairButton);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Repair bdb" })).toBeDisabled();
+    });
+
+    resolveRepair({
+      outcome: "repaired",
+      summary: "BE Home repaired the managed bdb install.",
+      guidance: "The managed bdb binary is ready again.",
+      toolState: runnableFixture.toolState,
+    });
+
+    expect(
+      await screen.findByText("BE Home repaired the managed bdb install."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Keep folders and storage understandable.")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Review the local defaults BE Home will start with."),
+    ).not.toBeInTheDocument();
   });
 
   it("shows a friendly host failure message", async () => {
