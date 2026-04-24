@@ -1,3 +1,4 @@
+mod apk;
 mod bdb;
 mod bdb_tool;
 mod device;
@@ -8,6 +9,16 @@ mod storage;
 #[tauri::command]
 fn load_setup_gate_state() -> Result<setup::SetupGateState, String> {
     setup::load_setup_gate_state()
+}
+
+#[tauri::command]
+fn load_apk_discovery_snapshot() -> Result<apk::ApkDiscoverySnapshot, String> {
+    apk::load_current_apk_discovery_snapshot()
+}
+
+#[tauri::command]
+fn inspect_manual_apk_path(input: apk::ManualApkPathInput) -> Result<apk::ApkCandidate, String> {
+    apk::inspect_manual_apk_path(input)
 }
 
 #[tauri::command]
@@ -67,6 +78,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             load_setup_gate_state,
+            load_apk_discovery_snapshot,
+            inspect_manual_apk_path,
             load_bdb_source_plan,
             load_bdb_tool_state,
             acquire_bdb_tool,
@@ -95,6 +108,18 @@ mod tests {
         assert!(serialized.get("toolState").is_some());
         assert!(serialized.get("storage").is_some());
         assert!(serialized.get("defaultScanFolders").is_some());
+    }
+
+    #[test]
+    fn apk_discovery_snapshot_serializes_the_discovery_contract() {
+        let snapshot = super::load_apk_discovery_snapshot()
+            .expect("apk discovery snapshot should load successfully");
+        let serialized =
+            serde_json::to_value(snapshot).expect("apk discovery snapshot should serialize");
+
+        assert!(serialized.get("status").is_some());
+        assert!(serialized.get("guidance").is_some());
+        assert!(serialized.get("candidates").is_some());
     }
 
     #[test]

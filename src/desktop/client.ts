@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ApkCandidate,
+  ApkDiscoverySnapshot,
   BdbAcquisitionResult,
   BdbSourcePlan,
   BdbToolState,
@@ -17,6 +19,22 @@ import type {
  */
 export function loadSetupGateState(): Promise<SetupGateState> {
   return invoke<SetupGateState>("load_setup_gate_state");
+}
+
+/**
+ * Loads the current APK discovery snapshot built from configured scan folders.
+ */
+export function loadApkDiscoverySnapshot(): Promise<ApkDiscoverySnapshot> {
+  return invoke<ApkDiscoverySnapshot>("load_apk_discovery_snapshot");
+}
+
+/**
+ * Inspects one manually selected APK path and returns a normalized candidate model.
+ */
+export function inspectManualApkPath(path: string): Promise<ApkCandidate> {
+  return invoke<ApkCandidate>("inspect_manual_apk_path", {
+    input: { path },
+  });
 }
 
 /**

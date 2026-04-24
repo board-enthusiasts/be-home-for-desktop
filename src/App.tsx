@@ -3,6 +3,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useEffectEvent, useMemo, useState } from "react";
 import {
   acquireBdbTool,
+  inspectManualApkPath,
+  loadApkDiscoverySnapshot,
   loadDesktopSettings,
   loadDeviceStatusSnapshot,
   loadInstalledTitlesSnapshot,
@@ -10,6 +12,8 @@ import {
   saveDesktopSettings,
 } from "./desktop/client";
 import type {
+  ApkCandidate,
+  ApkDiscoverySnapshot,
   BdbAcquisitionResult,
   DesktopSettings,
   DesktopSettingsInput,
@@ -150,6 +154,19 @@ function App() {
     errorMessage: null,
     errorDetail: null,
   });
+  const [apkDiscoveryState, setApkDiscoveryState] = useState<{
+    loading: boolean;
+    snapshot: ApkDiscoverySnapshot | null;
+    manualCandidate: ApkCandidate | null;
+    errorMessage: string | null;
+    errorDetail: string | null;
+  }>({
+    loading: false,
+    snapshot: null,
+    manualCandidate: null,
+    errorMessage: null,
+    errorDetail: null,
+  });
   const [windowFocused, setWindowFocused] = useState(true);
   const [documentVisible, setDocumentVisible] = useState(
     typeof document === "undefined" ? true : document.visibilityState !== "hidden",
@@ -255,6 +272,42 @@ function App() {
     },
   );
 
+  const refreshApkDiscovery = useEffectEvent(
+    async (source: "initial" | "manual" = "manual"): Promise<void> => {
+      if (setupGateState?.status !== "ready") {
+        return;
+      }
+
+      setApkDiscoveryState((previous) => ({
+        ...previous,
+        loading: true,
+        errorMessage: null,
+        errorDetail: null,
+      }));
+
+      try {
+        const snapshot = await loadApkDiscoverySnapshot();
+        setApkDiscoveryState((previous) => ({
+          ...previous,
+          loading: false,
+          snapshot,
+          errorMessage: null,
+          errorDetail: null,
+        }));
+      } catch {
+        setApkDiscoveryState((previous) => ({
+          ...previous,
+          loading: false,
+          errorMessage: "BE Home couldn't refresh the current APK scan just yet.",
+          errorDetail:
+            source === "initial"
+              ? "You can try again from the APK Library section once the workspace finishes loading."
+              : "Please try rescanning the current folders again in a moment.",
+        }));
+      }
+    },
+  );
+
   useEffect(() => {
     const handleVisibilityChange = () => {
       setDocumentVisible(document.visibilityState !== "hidden");
@@ -323,6 +376,21 @@ function App() {
     }
 
     void refreshInstalledTitles("initial");
+  }, [setupGateState?.status]);
+
+  useEffect(() => {
+    if (setupGateState?.status !== "ready") {
+      setApkDiscoveryState({
+        loading: false,
+        snapshot: null,
+        manualCandidate: null,
+        errorMessage: null,
+        errorDetail: null,
+      });
+      return;
+    }
+
+    void refreshApkDiscovery("initial");
   }, [setupGateState?.status]);
 
   async function refreshSetupGateState(options?: {
@@ -541,6 +609,51 @@ function App() {
     });
   }
 
+  async function handleChooseManualApk(): Promise<void> {
+    const selectedPath = await pickSinglePath(
+      await open({
+        directory: false,
+        filters: [
+          {
+            name: "Android Packages",
+            extensions: ["apk"],
+          },
+        ],
+        multiple: false,
+        defaultPath:
+          desktopSettings?.scanFolders[0]?.path ?? desktopSettings?.apkLibrary.effectivePath,
+      }),
+    );
+    if (selectedPath === null) {
+      return;
+    }
+
+    setApkDiscoveryState((previous) => ({
+      ...previous,
+      loading: true,
+      errorMessage: null,
+      errorDetail: null,
+    }));
+
+    try {
+      const manualCandidate = await inspectManualApkPath(selectedPath);
+      setApkDiscoveryState((previous) => ({
+        ...previous,
+        loading: false,
+        manualCandidate,
+        errorMessage: null,
+        errorDetail: null,
+      }));
+    } catch {
+      setApkDiscoveryState((previous) => ({
+        ...previous,
+        loading: false,
+        errorMessage: "BE Home couldn't inspect that APK just yet.",
+        errorDetail: "Choose another `.apk` file or try the same file again in a moment.",
+      }));
+    }
+  }
+
   if (errorMessage !== null) {
     return (
       <main className="page-shell desktop-shell">
@@ -706,6 +819,13 @@ function App() {
                   installedTitlesState={installedTitlesState}
                   onRefresh={() => void refreshInstalledTitles("manual")}
                 />
+              ) : activeWorkspaceSection === "apkLibrary" ? (
+                <ApkLibraryWorkspacePanel
+                  apkDiscoveryState={apkDiscoveryState}
+                  desktopSettings={desktopSettings}
+                  onChooseManualApk={() => void handleChooseManualApk()}
+                  onRefresh={() => void refreshApkDiscovery("manual")}
+                />
               ) : (
                 <>
                   <article className="panel desktop-workspace-panel">
@@ -745,6 +865,151 @@ function App() {
         )}
       </section>
     </main>
+  );
+}
+
+interface ApkLibraryWorkspacePanelProps {
+  apkDiscoveryState: {
+    loading: boolean;
+    snapshot: ApkDiscoverySnapshot | null;
+    manualCandidate: ApkCandidate | null;
+    errorMessage: string | null;
+    errorDetail: string | null;
+  };
+  desktopSettings: DesktopSettings | null;
+  onChooseManualApk: () => void;
+  onRefresh: () => void;
+}
+
+function ApkLibraryWorkspacePanel({
+  apkDiscoveryState,
+  desktopSettings,
+  onChooseManualApk,
+  onRefresh,
+}: ApkLibraryWorkspacePanelProps) {
+  const snapshot = apkDiscoveryState.snapshot;
+  const scanFolderCount = desktopSettings?.scanFolders.length ?? 0;
+
+  return (
+    <>
+      <article className="panel desktop-workspace-panel">
+        <div className="eyebrow">APK Library</div>
+        <h2>Keep local APK discovery simple and repeatable.</h2>
+        <p className="panel-description">
+          BE Home can walk your configured scan folders for `.apk` files, then keep manual file
+          picks on the same discovery model so the later heuristic and library steps have one place
+          to build from.
+        </p>
+
+        {snapshot !== null ? (
+          <article
+            className={`desktop-status-band desktop-status-band--${apkDiscoveryStatusTone(snapshot.status)}`}
+          >
+            <span className="desktop-status-band-label">
+              {apkDiscoveryStatusLabel(snapshot.status)}
+            </span>
+            <h3>{snapshot.summary}</h3>
+            <p>{snapshot.guidance}</p>
+          </article>
+        ) : null}
+
+        {apkDiscoveryState.errorMessage !== null ? (
+          <article className="desktop-inline-message desktop-inline-message--warning">
+            <h3>{apkDiscoveryState.errorMessage}</h3>
+            {apkDiscoveryState.errorDetail !== null ? (
+              <p>{apkDiscoveryState.errorDetail}</p>
+            ) : null}
+          </article>
+        ) : null}
+
+        <dl className="desktop-detail-grid">
+          <DetailRow
+            label="Scan folders"
+            value={scanFolderCount === 0 ? "No folders configured yet" : String(scanFolderCount)}
+          />
+          <DetailRow
+            label="Scanned APKs"
+            value={snapshot ? String(snapshot.candidates.length) : "Loading..."}
+          />
+          <DetailRow
+            label="Manual pick"
+            value={
+              apkDiscoveryState.manualCandidate?.fileName ??
+              "Choose an `.apk` when you already know the file you want."
+            }
+          />
+        </dl>
+
+        <div className="desktop-action-row">
+          <button
+            className="primary-button"
+            disabled={apkDiscoveryState.loading}
+            onClick={onChooseManualApk}
+            type="button"
+          >
+            Choose APK
+          </button>
+          <button
+            className="secondary-button"
+            disabled={apkDiscoveryState.loading}
+            onClick={onRefresh}
+            type="button"
+          >
+            {apkDiscoveryState.loading ? "Scanning..." : "Rescan folders"}
+          </button>
+        </div>
+      </article>
+
+      <article className="panel desktop-workspace-panel">
+        <div className="eyebrow">Current candidates</div>
+        <h2>See what BE Home has already discovered.</h2>
+        <p className="panel-description">
+          Duplicate scan results stay collapsed to a stable path-based identity, so rescans do not
+          fill this list with repeat entries.
+        </p>
+
+        {apkDiscoveryState.manualCandidate !== null ? (
+          <article className="desktop-inline-card">
+            <h3>Latest manual APK pick</h3>
+            <p>{apkDiscoveryState.manualCandidate.fileName}</p>
+            <p>{apkDiscoveryState.manualCandidate.sourcePath}</p>
+          </article>
+        ) : null}
+
+        {snapshot === null ? (
+          <article className="desktop-inline-card">
+            <h3>Scanning the current APK folders.</h3>
+            <p>BE Home is walking the configured folders for `.apk` files now.</p>
+          </article>
+        ) : snapshot.candidates.length === 0 ? (
+          <article className="desktop-inline-card">
+            <h3>{snapshot.summary}</h3>
+            <p>{snapshot.guidance}</p>
+          </article>
+        ) : (
+          <ul className="desktop-inventory-list">
+            {snapshot.candidates.map((candidate) => (
+              <li className="desktop-inventory-item" key={candidate.stableId}>
+                <div className="desktop-inventory-copy">
+                  <h3>{candidate.fileName}</h3>
+                  <p>{candidate.sourcePath}</p>
+                </div>
+                <div className="desktop-inventory-meta">
+                  <span className="desktop-inventory-pill">
+                    {candidate.discoverySource === "manualSelection"
+                      ? "Manual pick"
+                      : "Scan result"}
+                  </span>
+                  <span className="desktop-inventory-pill">
+                    {formatFileSize(candidate.fileSizeBytes)}
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </article>
+    </>
   );
 }
 
@@ -1599,6 +1864,29 @@ function installedTitlesStatusTone(
   }
 }
 
+function apkDiscoveryStatusLabel(value: ApkDiscoverySnapshot["status"]): string {
+  switch (value) {
+    case "ready":
+      return "Candidates found";
+    case "empty":
+      return "Nothing found yet";
+    default:
+      return value;
+  }
+}
+
+function apkDiscoveryStatusTone(
+  value: ApkDiscoverySnapshot["status"],
+): "success" | "warning" | "neutral" {
+  switch (value) {
+    case "ready":
+      return "success";
+    case "empty":
+    default:
+      return "neutral";
+  }
+}
+
 function buildDeviceGuidanceContent(
   snapshot: DeviceStatusSnapshot,
   setupGateState: SetupGateState,
@@ -1700,6 +1988,18 @@ function buildDeviceGuidanceContent(
         primaryActionLabel: "Refresh device check",
       };
   }
+}
+
+function formatFileSize(value: number): string {
+  if (value >= 1024 * 1024) {
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  if (value >= 1024) {
+    return `${Math.round(value / 1024)} KB`;
+  }
+
+  return `${value} bytes`;
 }
 
 async function pickSinglePath(
