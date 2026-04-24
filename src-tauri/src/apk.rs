@@ -269,13 +269,32 @@ fn extract_package_name(archive: &mut ZipArchive<File>) -> Option<String> {
     let mut bytes = Vec::new();
     manifest.read_to_end(&mut bytes).ok()?;
 
-    let mut candidates = extract_ascii_strings(&bytes);
-    candidates.extend(extract_utf16le_strings(&bytes));
-    candidates
+    let mut ascii_strings = extract_ascii_strings(&bytes);
+    if let Some(package_name) = extract_manifest_package_candidate(&ascii_strings) {
+        return Some(package_name);
+    }
+
+    let utf16_strings = extract_utf16le_strings(&bytes);
+    if let Some(package_name) = extract_manifest_package_candidate(&utf16_strings) {
+        return Some(package_name);
+    }
+
+    ascii_strings.extend(utf16_strings);
+    ascii_strings
         .into_iter()
         .filter(|candidate| looks_like_package_name(candidate))
         .filter(|candidate| !is_common_non_app_package(candidate))
         .max_by_key(package_name_score)
+}
+
+fn extract_manifest_package_candidate(strings: &[String]) -> Option<String> {
+    strings
+        .windows(2)
+        .find(|window| window[0].eq_ignore_ascii_case("package"))
+        .and_then(|window| window.get(1))
+        .filter(|candidate| looks_like_package_name(candidate))
+        .filter(|candidate| !is_common_non_app_package(candidate))
+        .cloned()
 }
 
 fn extract_ascii_strings(bytes: &[u8]) -> Vec<String> {
@@ -512,6 +531,24 @@ mod tests {
     }
 
     #[test]
+    fn manual_apk_inspection_prefers_the_manifest_package_over_class_names() {
+        let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let apk_path = temp_directory.path().join("LuckyDice.apk");
+        write_apk_with_manifest(
+            &apk_path,
+            true,
+            r#"<manifest package="fun.board.luckydice"><application><activity android:name="fun.board.luckydice.MainActivity" /></application></manifest>"#,
+        );
+
+        let candidate = inspect_manual_apk_path(ManualApkPathInput {
+            path: apk_path.to_string_lossy().into_owned(),
+        })
+        .expect("manual apk inspection should succeed");
+
+        assert_eq!(Some("fun.board.luckydice"), candidate.package_name.as_deref());
+    }
+
+    #[test]
     fn scan_candidates_preserve_the_scan_folder_they_were_found_from() {
         let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
         let scan_folder = temp_directory.path().join("Downloads");
@@ -533,6 +570,14 @@ mod tests {
     }
 
     fn write_apk(path: &Path, include_strong_marker: bool, package_name: &str) {
+        write_apk_with_manifest(
+            path,
+            include_strong_marker,
+            &format!(r#"<manifest package="{package_name}"></manifest>"#),
+        );
+    }
+
+    fn write_apk_with_manifest(path: &Path, include_strong_marker: bool, manifest: &str) {
         let file = File::create(path).expect("apk file should create");
         let mut writer = ZipWriter::new(file);
         let options = SimpleFileOptions::default()
@@ -542,7 +587,7 @@ mod tests {
             .start_file("AndroidManifest.xml", options)
             .expect("manifest should start");
         writer
-            .write_all(format!(r#"<manifest package="{package_name}"></manifest>"#).as_bytes())
+            .write_all(manifest.as_bytes())
             .expect("manifest should write");
 
         if include_strong_marker {
