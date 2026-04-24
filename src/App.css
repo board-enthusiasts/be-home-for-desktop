@@ -373,6 +373,12 @@
   gap: 0.55rem;
 }
 
+.desktop-inventory-side {
+  display: grid;
+  justify-items: end;
+  gap: 0.7rem;
+}
+
 .desktop-inventory-pill {
   display: inline-flex;
   align-items: center;
@@ -383,6 +389,14 @@
   color: rgba(220, 247, 234, 0.78);
   font-size: 0.82rem;
   font-weight: 700;
+}
+
+.desktop-library-timestamp {
+  margin: 0;
+  color: rgb(203 213 225 / 1);
+  font-size: 0.88rem;
+  line-height: 1.7;
+  text-align: right;
 }
 
 .desktop-inline-button {
@@ -557,5 +571,13 @@
 
   .desktop-inventory-meta {
     justify-content: flex-start;
+  }
+
+  .desktop-inventory-side {
+    justify-items: start;
+  }
+
+  .desktop-library-timestamp {
+    text-align: left;
   }
 }
