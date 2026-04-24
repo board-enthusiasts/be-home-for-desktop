@@ -114,12 +114,19 @@ fn import_apk_to_managed_library_at(
     source_candidate: apk::ApkCandidate,
 ) -> Result<ManagedApkLibraryImportResult, String> {
     let mut manifest = load_persisted_library_manifest(manifest_path)?;
-    let stable_id = format!("library:{}", path_identity_key(&source_candidate.source_path));
+    let source_key = path_identity_key(&source_candidate.source_path);
+    let derived_stable_id = format!("library:{source_key}");
     let existing_item = manifest
         .items
         .iter()
-        .find(|item| item.stable_id == stable_id)
+        .find(|item| {
+            item.stable_id == derived_stable_id || path_identity_key(&item.managed_path) == source_key
+        })
         .cloned();
+    let stable_id = existing_item
+        .as_ref()
+        .map(|item| item.stable_id.clone())
+        .unwrap_or(derived_stable_id);
     let occupied_managed_paths = manifest
         .items
         .iter()
@@ -132,6 +139,8 @@ fn import_apk_to_managed_library_at(
         existing_item.as_ref().map(|item| item.managed_path.as_str()),
         &occupied_managed_paths,
     );
+    let managed_path_string = path_to_string(&managed_path);
+    let managed_path_key = path_identity_key(&managed_path_string);
 
     copy_into_library_if_needed(source_path, &managed_path)?;
 
@@ -147,11 +156,19 @@ fn import_apk_to_managed_library_at(
             managed_path.display()
         )
     })?;
+    let original_source_path = if source_key == managed_path_key {
+        existing_item
+            .as_ref()
+            .map(|item| item.original_source_path.clone())
+            .unwrap_or_else(|| source_candidate.source_path.clone())
+    } else {
+        source_candidate.source_path.clone()
+    };
     let persisted_item = PersistedLibraryItem {
         stable_id: stable_id.clone(),
         file_name: source_candidate.file_name.clone(),
-        original_source_path: source_candidate.source_path.clone(),
-        managed_path: path_to_string(&managed_path),
+        original_source_path,
+        managed_path: managed_path_string.clone(),
         package_name: source_candidate.package_name.clone(),
         confidence: source_candidate.confidence,
         confidence_summary: source_candidate.confidence_summary.clone(),
@@ -161,14 +178,15 @@ fn import_apk_to_managed_library_at(
         managed_modified_at_unix_ms: metadata_to_unix_ms(&managed_metadata),
     };
 
-    manifest.items.retain(|item| item.stable_id != stable_id);
+    manifest.items.retain(|item| {
+        item.stable_id != stable_id && path_identity_key(&item.managed_path) != managed_path_key
+    });
     manifest.items.push(persisted_item.clone());
     save_persisted_library_manifest(manifest_path, &manifest)?;
 
     let snapshot = build_library_snapshot(manifest);
     let item = persisted_to_library_item(persisted_item);
-    let source_and_destination_match =
-        path_identity_key(&item.original_source_path) == path_identity_key(&item.managed_path);
+    let source_and_destination_match = source_key == managed_path_key;
 
     Ok(ManagedApkLibraryImportResult {
         summary: if source_and_destination_match {
@@ -478,6 +496,38 @@ mod tests {
         let manifest =
             load_persisted_library_manifest(&manifest_path).expect("manifest should load");
         assert_eq!(1, manifest.items.len());
+    }
+
+    #[test]
+    fn import_reusing_a_managed_copy_keeps_one_library_entry() {
+        let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let manifest_path = temp_directory.path().join("settings").join("managed-apk-library.json");
+        let library_root = temp_directory.path().join("apk-library");
+        let source_root = temp_directory.path().join("downloads");
+        fs::create_dir_all(&source_root).expect("source root should exist");
+        let source_path = source_root.join("LuckyDice.apk");
+        write_apk(&source_path, true, "fun.board.luckydice");
+
+        let first_result = import_candidate(&manifest_path, &library_root, &source_path);
+        let managed_copy_path = Path::new(&first_result.item.managed_path).to_path_buf();
+        let second_result = import_candidate(&manifest_path, &library_root, &managed_copy_path);
+
+        assert_eq!(first_result.item.stable_id, second_result.item.stable_id);
+        assert_eq!(first_result.item.managed_path, second_result.item.managed_path);
+        assert_eq!(
+            first_result.item.original_source_path,
+            second_result.item.original_source_path
+        );
+        assert!(second_result.summary.contains("added"));
+
+        let manifest =
+            load_persisted_library_manifest(&manifest_path).expect("manifest should load");
+        assert_eq!(1, manifest.items.len());
+        assert_eq!(
+            first_result.item.original_source_path,
+            manifest.items[0].original_source_path
+        );
+        assert_eq!(first_result.item.managed_path, manifest.items[0].managed_path);
     }
 
     #[test]

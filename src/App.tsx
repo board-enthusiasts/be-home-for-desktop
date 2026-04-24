@@ -510,6 +510,9 @@ function App() {
 
   async function handleAcquireBdbTool(
     repair: boolean,
+    options?: {
+      showReviewDefaultsOnReady?: boolean;
+    },
   ): Promise<BdbAcquisitionResult | null> {
     setToolActionState({
       loading: true,
@@ -528,8 +531,9 @@ function App() {
       });
       await refreshSetupGateState({
         showReviewDefaultsOnReady:
-          result.toolState.status === "runnable" &&
-          (result.outcome === "downloaded" || result.outcome === "repaired"),
+          options?.showReviewDefaultsOnReady ??
+          (result.toolState.status === "runnable" &&
+            (result.outcome === "downloaded" || result.outcome === "repaired")),
       });
       return result;
     } catch {
@@ -666,7 +670,15 @@ function App() {
   }
 
   async function handleRepairFromSettings(): Promise<void> {
-    const result = await handleAcquireBdbTool(true);
+    setSettingsActionState({
+      loading: true,
+      message: null,
+      detail: null,
+    });
+
+    const result = await handleAcquireBdbTool(true, {
+      showReviewDefaultsOnReady: false,
+    });
     if (result === null) {
       setSettingsActionState({
         loading: false,
@@ -1023,8 +1035,10 @@ function ApkLibraryWorkspacePanel({
   const librarySnapshot = managedLibraryState.snapshot;
   const scanFolderCount = desktopSettings?.scanFolders.length ?? 0;
   const importedSourcePathKeys = new Set(
-    managedLibraryState.snapshot?.items.map((item) => pathIdentityKey(item.originalSourcePath)) ??
-      [],
+    managedLibraryState.snapshot?.items.flatMap((item) => [
+      pathIdentityKey(item.originalSourcePath),
+      pathIdentityKey(item.managedPath),
+    ]) ?? [],
   );
   const manualCandidateImported =
     apkDiscoveryState.manualCandidate !== null &&
@@ -1512,7 +1526,7 @@ function DeviceWorkspacePanel({
             <StatusSummaryCard
               title="Current bdb version check"
               summary={snapshot.bdbVersion.summary}
-              guidance={snapshot.guidance}
+              guidance={snapshot.bdbVersion.detail ?? snapshot.guidance}
             />
           </>
         )}
@@ -1521,11 +1535,27 @@ function DeviceWorkspacePanel({
       {guidanceContent === null ? (
         <article className="panel desktop-workspace-panel">
           <div className="eyebrow">Recovery help</div>
-          <h2>We’ll load the right next steps after the first device check.</h2>
+          <h2>
+            {deviceStatusState.errorMessage !== null
+              ? "Try the device check again."
+              : "We’ll load the right next steps after the first device check."}
+          </h2>
           <p className="panel-description">
-            Once BE Home has the current Board status, this area will turn it into simple recovery
-            guidance instead of terminal-style troubleshooting.
+            {deviceStatusState.errorDetail ??
+              "Once BE Home has the current Board status, this area will turn it into simple recovery guidance instead of terminal-style troubleshooting."}
           </p>
+          {deviceStatusState.errorMessage !== null ? (
+            <div className="desktop-action-row">
+              <button
+                className="primary-button"
+                disabled={deviceStatusState.loading}
+                onClick={onRefresh}
+                type="button"
+              >
+                {deviceStatusState.loading ? "Refreshing..." : "Refresh device check"}
+              </button>
+            </div>
+          ) : null}
         </article>
       ) : (
         <article
