@@ -5,6 +5,7 @@ mod bdb_tool;
 mod device;
 mod installed_titles;
 mod library;
+mod shell;
 mod setup;
 mod storage;
 
@@ -107,11 +108,61 @@ fn save_desktop_settings(
     storage::save_desktop_settings(input)
 }
 
+#[tauri::command]
+fn open_setup_wizard_window(app: tauri::AppHandle) -> Result<(), String> {
+    shell::open_setup_wizard_window(&app)
+}
+
+#[tauri::command]
+fn open_settings_window(app: tauri::AppHandle) -> Result<(), String> {
+    shell::open_settings_window(&app)
+}
+
+#[tauri::command]
+fn open_about_window(app: tauri::AppHandle) -> Result<(), String> {
+    shell::open_about_window(&app)
+}
+
+#[tauri::command]
+fn show_main_workspace_window(app: tauri::AppHandle) -> Result<(), String> {
+    shell::show_main_workspace_window(&app)
+}
+
+#[tauri::command]
+fn dismiss_setup_wizard_window(app: tauri::AppHandle) -> Result<(), String> {
+    shell::dismiss_setup_wizard_or_exit(&app)
+}
+
+#[tauri::command]
+fn emit_settings_updated(app: tauri::AppHandle) -> Result<(), String> {
+    shell::emit_settings_updated(&app)
+}
+
+#[tauri::command]
+fn exit_application(app: tauri::AppHandle) -> Result<(), String> {
+    app.exit(0);
+    Ok(())
+}
+
 /// Starts the Tauri desktop host for BE Home for Desktop.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            shell::initialize_native_shell(&app.handle()).map_err(|error| {
+                Box::<dyn std::error::Error>::from(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    error,
+                ))
+            })
+        })
+        .on_menu_event(|app, event| {
+            if let Err(error) = shell::handle_menu_event(app, event.id().as_ref()) {
+                eprintln!("BE Home for Desktop menu error: {error}");
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             load_setup_gate_state,
             load_apk_discovery_snapshot,
@@ -129,7 +180,14 @@ pub fn run() {
             load_managed_storage_settings,
             load_desktop_settings,
             save_managed_storage_settings,
-            save_desktop_settings
+            save_desktop_settings,
+            open_setup_wizard_window,
+            open_settings_window,
+            open_about_window,
+            show_main_workspace_window,
+            dismiss_setup_wizard_window,
+            emit_settings_updated,
+            exit_application
         ])
         .run(tauri::generate_context!())
         .expect("error while running BE Home for Desktop");
