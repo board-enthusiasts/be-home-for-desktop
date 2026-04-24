@@ -201,7 +201,7 @@ const installedTitlesFixture: InstalledTitlesSnapshot = {
 
 const apkDiscoveryFixture: ApkDiscoverySnapshot = {
   status: "ready",
-  summary: "BE Home found 2 APK file(s) across the current scan folders.",
+  summary: "BE Home found 2 strong Board APK match(es) across the current scan folders.",
   guidance:
     "Use rescan after you add new downloads to a watched folder, or choose a file manually when you already know where it lives.",
   candidates: [
@@ -212,6 +212,9 @@ const apkDiscoveryFixture: ApkDiscoverySnapshot = {
       discoverySource: "scanFolder",
       discoveredFromPath: "C:\\Users\\Matt\\Downloads",
       fileSizeBytes: 2048000,
+      packageName: "fun.board.luckydice",
+      confidence: "strongMatch",
+      confidenceSummary: "BE Home found a strong Board SDK marker in this APK.",
     },
     {
       stableId: "apk:c:\\users\\matt\\games\\familymatch.apk",
@@ -220,6 +223,9 @@ const apkDiscoveryFixture: ApkDiscoverySnapshot = {
       discoverySource: "scanFolder",
       discoveredFromPath: "C:\\Users\\Matt\\Games",
       fileSizeBytes: 1024000,
+      packageName: "fun.board.familymatch",
+      confidence: "strongMatch",
+      confidenceSummary: "BE Home found a strong Board SDK marker in this APK.",
     },
   ],
 };
@@ -231,6 +237,10 @@ const manualApkCandidateFixture: ApkCandidate = {
   discoverySource: "manualSelection",
   discoveredFromPath: null,
   fileSizeBytes: 3072000,
+  packageName: "fun.board.manualchoice",
+  confidence: "possibleMatch",
+  confidenceSummary:
+    "BE Home found some Android packaging signals, but not the strongest Board marker yet.",
 };
 
 const unsupportedSetupFixture: SetupGateState = {
@@ -636,6 +646,12 @@ describe("App", () => {
 
     expect(await screen.findByText("Latest manual APK pick")).toBeInTheDocument();
     expect(screen.getAllByText("ManualChoice.apk").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Possible Board match")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "BE Home found some Android packaging signals, but not the strongest Board marker yet.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("shows a friendly host failure message", async () => {

@@ -969,10 +969,20 @@ function ApkLibraryWorkspacePanel({
         </p>
 
         {apkDiscoveryState.manualCandidate !== null ? (
-          <article className="desktop-inline-card">
+          <article
+            className={
+              apkDiscoveryState.manualCandidate.confidence === "strongMatch"
+                ? "desktop-inline-card"
+                : "desktop-inline-message desktop-inline-message--warning"
+            }
+          >
             <h3>Latest manual APK pick</h3>
             <p>{apkDiscoveryState.manualCandidate.fileName}</p>
-            <p>{apkDiscoveryState.manualCandidate.sourcePath}</p>
+            <p>{apkConfidenceLabel(apkDiscoveryState.manualCandidate.confidence)}</p>
+            <p>{apkDiscoveryState.manualCandidate.confidenceSummary}</p>
+            {apkDiscoveryState.manualCandidate.packageName !== null ? (
+              <p>{apkDiscoveryState.manualCandidate.packageName}</p>
+            ) : null}
           </article>
         ) : null}
 
@@ -996,9 +1006,7 @@ function ApkLibraryWorkspacePanel({
                 </div>
                 <div className="desktop-inventory-meta">
                   <span className="desktop-inventory-pill">
-                    {candidate.discoverySource === "manualSelection"
-                      ? "Manual pick"
-                      : "Scan result"}
+                    {apkConfidenceLabel(candidate.confidence)}
                   </span>
                   <span className="desktop-inventory-pill">
                     {formatFileSize(candidate.fileSizeBytes)}
@@ -1884,6 +1892,18 @@ function apkDiscoveryStatusTone(
     case "empty":
     default:
       return "neutral";
+  }
+}
+
+function apkConfidenceLabel(value: ApkCandidate["confidence"]): string {
+  switch (value) {
+    case "strongMatch":
+      return "Strong Board match";
+    case "possibleMatch":
+      return "Possible Board match";
+    case "unknown":
+    default:
+      return "Board match unknown";
   }
 }
 
