@@ -5,6 +5,7 @@ import type {
   BdbToolState,
   DesktopSettings,
   DesktopSettingsInput,
+  DeviceStatusSnapshot,
   ManagedStorageOverridesInput,
   ManagedStorageSettings,
   SetupGateState,
@@ -36,6 +37,13 @@ export function loadBdbToolState(): Promise<BdbToolState> {
  */
 export function acquireBdbTool(repair = false): Promise<BdbAcquisitionResult> {
   return invoke<BdbAcquisitionResult>("acquire_bdb_tool", { repair });
+}
+
+/**
+ * Loads the current Board connection snapshot and `bdb` version details.
+ */
+export function loadDeviceStatusSnapshot(): Promise<DeviceStatusSnapshot> {
+  return invoke<DeviceStatusSnapshot>("load_device_status_snapshot");
 }
 
 /**
