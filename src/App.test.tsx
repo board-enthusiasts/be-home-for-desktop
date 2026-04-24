@@ -426,6 +426,64 @@ describe("App", () => {
     expect(screen.getByText("BE Home added a new scan folder.")).toBeInTheDocument();
   });
 
+  it("keeps settings repairs inside the workspace and disables repeat submits", async () => {
+    let resolveRepair!: (value: {
+      outcome: "repaired";
+      summary: string;
+      guidance: string;
+      toolState: SetupGateState["toolState"];
+    }) => void;
+    const repairPromise = new Promise<{
+      outcome: "repaired";
+      summary: string;
+      guidance: string;
+      toolState: SetupGateState["toolState"];
+    }>((resolve) => {
+      resolveRepair = resolve;
+    });
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "load_setup_gate_state") {
+        return runnableFixture;
+      }
+
+      if (command === "load_desktop_settings") {
+        return desktopSettingsFixture;
+      }
+      if (command === "acquire_bdb_tool") {
+        return repairPromise;
+      }
+
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    render(<App />);
+    expect(await screen.findByText("Your desktop install space is ready")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Settings/ }));
+    expect(await screen.findByText("Keep folders and storage understandable.")).toBeInTheDocument();
+
+    const repairButton = screen.getByRole("button", { name: "Repair bdb" });
+    fireEvent.click(repairButton);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Repair bdb" })).toBeDisabled();
+    });
+
+    resolveRepair({
+      outcome: "repaired",
+      summary: "BE Home repaired the managed bdb install.",
+      guidance: "The managed bdb binary is ready again.",
+      toolState: runnableFixture.toolState,
+    });
+
+    expect(
+      await screen.findByText("BE Home repaired the managed bdb install."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Keep folders and storage understandable.")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Review the local defaults BE Home will start with."),
+    ).not.toBeInTheDocument();
+  });
+
   it("polls device status while the workspace stays visible", async () => {
     let deviceStatusReads = 0;
     invokeMock.mockImplementation(async (command) => {
@@ -464,6 +522,42 @@ describe("App", () => {
     await waitFor(() => {
       expect(deviceStatusReads).toBeGreaterThanOrEqual(2);
     });
+  });
+
+  it("shows the version check detail instead of unrelated connection guidance", async () => {
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "load_setup_gate_state") {
+        return runnableFixture;
+      }
+
+      if (command === "load_desktop_settings") {
+        return desktopSettingsFixture;
+      }
+
+      if (command === "load_device_status_snapshot") {
+        return {
+          ...deviceStatusFixture,
+          guidance:
+            "You can keep using the desktop workspace while BE Home refreshes the connection in the background.",
+          bdbVersion: {
+            ...deviceStatusFixture.bdbVersion,
+            status: "unavailable",
+            value: null,
+            summary: "BE Home could not confirm which bdb version is loaded right now.",
+            detail: "version probe failed",
+          },
+        };
+      }
+
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    render(<App />);
+
+    expect(
+      await screen.findByText("BE Home could not confirm which bdb version is loaded right now."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("version probe failed")).toBeInTheDocument();
   });
 
   it("shows friendly recovery guidance when Board is disconnected", async () => {
@@ -536,6 +630,41 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
 
     expect(await screen.findByText("Keep folders and storage understandable.")).toBeInTheDocument();
+  });
+
+  it("keeps manual refresh available when the first device check fails", async () => {
+    let deviceStatusReads = 0;
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "load_setup_gate_state") {
+        return runnableFixture;
+      }
+
+      if (command === "load_desktop_settings") {
+        return desktopSettingsFixture;
+      }
+
+      if (command === "load_device_status_snapshot") {
+        deviceStatusReads += 1;
+        if (deviceStatusReads === 1) {
+          throw new Error("temporary device failure");
+        }
+
+        return deviceStatusFixture;
+      }
+
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    render(<App />);
+
+    expect(
+      await screen.findByText("BE Home couldn't refresh the latest Board connection check."),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh device check" }));
+
+    expect(await screen.findByText("Board connection looks ready.")).toBeInTheDocument();
+    expect(deviceStatusReads).toBe(2);
   });
 
   it("guides unsupported hosts during the setup check", async () => {
