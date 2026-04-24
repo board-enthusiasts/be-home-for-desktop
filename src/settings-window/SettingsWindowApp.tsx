@@ -1,29 +1,54 @@
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useState } from "react";
 import {
   acquireBdbTool,
   emitSettingsUpdated,
+  loadBdbToolState,
   loadDesktopSettings,
-  loadSetupGateState,
+  refreshBdbToolState,
   saveDesktopSettings,
 } from "../desktop/client";
 import type {
+  BdbToolState,
   DesktopSettings,
   DesktopSettingsInput,
-  SetupGateState,
+  SupportRequestDraft,
 } from "../desktop/types";
-import { locationSourceLabel } from "../desktop-shell/formatters";
-import { DetailRow, StatusSummaryCard } from "../desktop-shell/ui";
 
-interface SettingsActionState {
-  loading: boolean;
-  message: string | null;
+type SettingsTabId = "locations" | "boardConnection" | "boardTool";
+
+interface InlineNotice {
+  tone: "neutral" | "warning" | "success";
+  title: string;
   detail: string | null;
 }
 
-async function pickSinglePath(
-  selection: string | string[] | null,
-): Promise<string | null> {
+const pollIntervalOptions = [
+  { label: "5 seconds", value: 5 },
+  { label: "10 seconds", value: 10 },
+  { label: "30 seconds", value: 30 },
+];
+
+function iconButton(icon: string, label: string, onClick: () => void, disabled = false) {
+  return (
+    <button
+      aria-label={label}
+      className="desktop-icon-button"
+      disabled={disabled}
+      onClick={onClick}
+      title={label}
+      type="button"
+    >
+      <span aria-hidden="true" className="material-symbols-outlined">
+        {icon}
+      </span>
+    </button>
+  );
+}
+
+async function pickSinglePath(selection: string | string[] | null): Promise<string | null> {
   if (selection === null) {
     return null;
   }
@@ -35,62 +60,82 @@ async function pickSinglePath(
   return selection;
 }
 
+function normalizeLibraryOverride(defaultPath: string, currentPath: string): string | null {
+  const trimmed = currentPath.trim();
+  if (trimmed.length === 0 || trimmed === defaultPath) {
+    return null;
+  }
+
+  return trimmed;
+}
+
+function toolActionLabel(toolState: BdbToolState): string {
+  if (!toolState.executableExists) {
+    return "Download";
+  }
+
+  if (toolState.updateStatus.status === "updateAvailable") {
+    return "Download Update";
+  }
+
+  return "Reinstall";
+}
+
 export default function SettingsWindowApp() {
-  const [setupGateState, setSetupGateState] = useState<SetupGateState | null>(null);
+  const [activeTabId, setActiveTabId] = useState<SettingsTabId>("locations");
   const [desktopSettings, setDesktopSettings] = useState<DesktopSettings | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [settingsActionState, setSettingsActionState] = useState<SettingsActionState>({
-    loading: false,
-    message: null,
-    detail: null,
-  });
+  const [toolState, setToolState] = useState<BdbToolState | null>(null);
+  const [windowError, setWindowError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [inlineNotice, setInlineNotice] = useState<InlineNotice | null>(null);
+  const [supportDialogDraft, setSupportDialogDraft] = useState<SupportRequestDraft | null>(null);
 
   useEffect(() => {
     void refreshWindowState();
   }, []);
 
-  async function refreshWindowState(): Promise<void> {
+  async function refreshWindowState(options?: { refreshManifest?: boolean }): Promise<void> {
     try {
-      const [setupState, settings] = await Promise.all([
-        loadSetupGateState(),
+      const [settings, latestToolState] = await Promise.all([
         loadDesktopSettings(),
+        options?.refreshManifest === true ? refreshBdbToolState() : loadBdbToolState(),
       ]);
-      setSetupGateState(setupState);
       setDesktopSettings(settings);
-      setErrorMessage(null);
+      setToolState(latestToolState);
+      setWindowError(null);
     } catch {
-      setErrorMessage(
-        "BE Home couldn't load your settings just yet. Try closing and reopening the window.",
+      setWindowError(
+        "BE Home couldn't load this settings window just yet. Please close it and try again.",
       );
     }
   }
 
-  async function persistDesktopSettings(
+  async function persistSettings(
     input: DesktopSettingsInput,
-    successMessage: string,
+    successTitle: string,
+    successDetail: string,
   ): Promise<void> {
-    setSettingsActionState({
-      loading: true,
-      message: null,
-      detail: null,
-    });
+    setBusy(true);
+    setInlineNotice(null);
 
     try {
       const savedSettings = await saveDesktopSettings(input);
       setDesktopSettings(savedSettings);
-      setSettingsActionState({
-        loading: false,
-        message: successMessage,
-        detail: "Your changes are saved and will still be here when you reopen the app.",
+      setInlineNotice({
+        tone: "success",
+        title: successTitle,
+        detail: successDetail,
       });
       await emitSettingsUpdated();
       await refreshWindowState();
     } catch {
-      setSettingsActionState({
-        loading: false,
-        message: "BE Home couldn't save those settings.",
+      setInlineNotice({
+        tone: "warning",
+        title: "BE Home couldn't save these settings yet.",
         detail: "Please try again in a moment.",
       });
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -113,23 +158,22 @@ export default function SettingsWindowApp() {
     }
 
     if (desktopSettings.scanFolders.some((folder) => folder.path === selectedPath)) {
-      setSettingsActionState({
-        loading: false,
-        message: "That folder is already on your scan list.",
-        detail: "Choose another folder if you want BE Home to watch an additional place.",
+      setInlineNotice({
+        tone: "neutral",
+        title: "That folder is already on the list.",
+        detail: "Choose another folder if you want BE Home to check an additional place.",
       });
       return;
     }
 
-    await persistDesktopSettings(
+    await persistSettings(
       {
         apkLibraryOverride: desktopSettings.apkLibrary.overridePath,
-        scanFolderPaths: [
-          ...desktopSettings.scanFolders.map((folder) => folder.path),
-          selectedPath,
-        ],
+        boardConnectionPollIntervalSeconds: desktopSettings.boardConnection.pollIntervalSeconds,
+        scanFolderPaths: [...desktopSettings.scanFolders.map((folder) => folder.path), selectedPath],
       },
-      "BE Home added a new scan folder.",
+      "Games and apps folders updated.",
+      "BE Home will keep this new folder in view the next time you rescan.",
     );
   }
 
@@ -138,18 +182,20 @@ export default function SettingsWindowApp() {
       return;
     }
 
-    await persistDesktopSettings(
+    await persistSettings(
       {
         apkLibraryOverride: desktopSettings.apkLibrary.overridePath,
+        boardConnectionPollIntervalSeconds: desktopSettings.boardConnection.pollIntervalSeconds,
         scanFolderPaths: desktopSettings.scanFolders
           .map((folder) => folder.path)
-          .filter((scanFolderPath) => scanFolderPath !== path),
+          .filter((folderPath) => folderPath !== path),
       },
-      "BE Home updated your scan folder list.",
+      "Games and apps folders updated.",
+      "BE Home saved the new folder list.",
     );
   }
 
-  async function handleChangeApkLibraryLocation(): Promise<void> {
+  async function handleChangeLibraryLocation(): Promise<void> {
     if (desktopSettings === null) {
       return;
     }
@@ -165,77 +211,173 @@ export default function SettingsWindowApp() {
       return;
     }
 
-    await persistDesktopSettings(
+    await persistSettings(
       {
-        apkLibraryOverride: selectedPath,
+        apkLibraryOverride: normalizeLibraryOverride(
+          desktopSettings.apkLibrary.defaultPath,
+          selectedPath,
+        ),
+        boardConnectionPollIntervalSeconds: desktopSettings.boardConnection.pollIntervalSeconds,
         scanFolderPaths: desktopSettings.scanFolders.map((folder) => folder.path),
       },
-      "BE Home updated the managed APK library location.",
+      "Saved library location updated.",
+      "BE Home will use this folder for saved copies from now on.",
     );
   }
 
-  async function handleResetApkLibraryLocation(): Promise<void> {
+  async function handleResetLibraryLocation(): Promise<void> {
     if (desktopSettings === null) {
       return;
     }
 
-    await persistDesktopSettings(
+    await persistSettings(
       {
         apkLibraryOverride: null,
+        boardConnectionPollIntervalSeconds: desktopSettings.boardConnection.pollIntervalSeconds,
         scanFolderPaths: desktopSettings.scanFolders.map((folder) => folder.path),
       },
-      "BE Home switched the APK library back to the app default folder.",
+      "Saved library location reset.",
+      "BE Home is using the recommended location again.",
     );
   }
 
-  async function handleRepairFromSettings(): Promise<void> {
-    setSettingsActionState({
-      loading: true,
-      message: null,
-      detail: null,
-    });
+  async function handleChangePollInterval(nextValue: number): Promise<void> {
+    if (desktopSettings === null) {
+      return;
+    }
+
+    await persistSettings(
+      {
+        apkLibraryOverride: desktopSettings.apkLibrary.overridePath,
+        boardConnectionPollIntervalSeconds: nextValue,
+        scanFolderPaths: desktopSettings.scanFolders.map((folder) => folder.path),
+      },
+      "Board connection timing updated.",
+      "BE Home will use the new refresh timing the next time it checks your Board.",
+    );
+  }
+
+  async function handleCheckForUpdate(): Promise<void> {
+    setBusy(true);
+    setInlineNotice(null);
 
     try {
-      const result = await acquireBdbTool(true);
-      setSettingsActionState({
-        loading: false,
-        message: result.summary,
-        detail: result.guidance,
+      const latestToolState = await refreshBdbToolState();
+      setToolState(latestToolState);
+      setInlineNotice({
+        tone:
+          latestToolState.updateStatus.status === "updateAvailable" ? "warning" : "neutral",
+        title: "BE Home checked Board's latest Board Install Tool version.",
+        detail: latestToolState.updateStatus.guidance,
       });
       await emitSettingsUpdated();
-      await refreshWindowState();
     } catch {
-      setSettingsActionState({
-        loading: false,
-        message: "BE Home couldn't start the bdb repair just yet.",
+      setInlineNotice({
+        tone: "warning",
+        title: "BE Home couldn't check for updates right now.",
         detail: "Please try again in a moment.",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRepairOrReinstall(): Promise<void> {
+    if (toolState === null) {
+      return;
+    }
+
+    setBusy(true);
+    setInlineNotice(null);
+
+    try {
+      const result = await acquireBdbTool(toolState.executableExists);
+      setInlineNotice({
+        tone: result.outcome === "failed" ? "warning" : "success",
+        title: result.summary,
+        detail: result.guidance,
+      });
+      await refreshWindowState({ refreshManifest: true });
+      await emitSettingsUpdated();
+    } catch {
+      setInlineNotice({
+        tone: "warning",
+        title: "BE Home couldn't finish that Board Install Tool action.",
+        detail: "Please try again in a moment.",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleOpenSupportEmail(): Promise<void> {
+    if (supportDialogDraft === null) {
+      return;
+    }
+
+    try {
+      await openUrl(supportDialogDraft.mailtoUrl);
+    } catch {
+      setInlineNotice({
+        tone: "warning",
+        title: "BE Home couldn't open your email app automatically.",
+        detail: "You can still copy the draft from this window.",
       });
     }
   }
 
-  if (errorMessage !== null) {
+  async function handleCopySupportDraft(): Promise<void> {
+    if (supportDialogDraft === null) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(
+        [`To: ${supportDialogDraft.to}`, `Subject: ${supportDialogDraft.subject}`, "", supportDialogDraft.body].join(
+          "\n",
+        ),
+      );
+      setInlineNotice({
+        tone: "success",
+        title: "Email draft copied.",
+        detail: "Paste it into your mail app, then add your email address and name before sending.",
+      });
+    } catch {
+      setInlineNotice({
+        tone: "warning",
+        title: "BE Home couldn't copy the email draft automatically.",
+        detail: "Please use the draft text shown in this window instead.",
+      });
+    }
+  }
+
+  async function handleCloseWindow(): Promise<void> {
+    await getCurrentWindow().close();
+  }
+
+  if (windowError !== null) {
     return (
       <main className="page-shell desktop-shell desktop-utility-window">
         <section className="page-grid narrow">
           <section className="panel desktop-state-card" aria-live="polite">
             <div className="eyebrow">Settings</div>
             <h2>Please close BE Home for Desktop and try again.</h2>
-            <p className="panel-description">{errorMessage}</p>
+            <p className="panel-description">{windowError}</p>
           </section>
         </section>
       </main>
     );
   }
 
-  if (setupGateState === null || desktopSettings === null) {
+  if (desktopSettings === null || toolState === null) {
     return (
       <main className="page-shell desktop-shell desktop-utility-window">
         <section className="page-grid narrow">
           <section className="panel desktop-state-card" aria-live="polite">
             <div className="eyebrow">Settings</div>
-            <h2>Loading your folder settings.</h2>
+            <h2>Loading settings</h2>
             <p className="panel-description">
-              BE Home is loading your current scan folders and storage choices.
+              BE Home is loading your folder choices and Board Install Tool details.
             </p>
           </section>
         </section>
@@ -245,138 +387,323 @@ export default function SettingsWindowApp() {
 
   return (
     <main className="page-shell desktop-shell desktop-utility-window">
-      <section className="page-grid desktop-grid">
-        <article className="hero-panel desktop-banner desktop-banner--compact">
-          <div className="hero-copy desktop-banner-copy">
-            <div className="eyebrow">Settings</div>
-            <h1>Keep folders and storage understandable</h1>
-            <p>
-              These settings stay focused on the places BE Home actually uses, so you can shape
-              your install routine without hunting through app files.
-            </p>
-          </div>
-        </article>
+      <section className="page-grid narrow desktop-utility-grid">
+        <section className="panel desktop-utility-card">
+          <header className="desktop-utility-header">
+            <div className="desktop-utility-heading">
+              <div className="eyebrow">Settings</div>
+              <h1>BE Home for Desktop settings</h1>
+              <p className="panel-description">
+                Keep the most important folders, Board checks, and Board Install Tool options in
+                one easy place.
+              </p>
+            </div>
+            <nav aria-label="Settings sections" className="desktop-tab-row">
+              <button
+                className={
+                  activeTabId === "locations"
+                    ? "desktop-tab-button desktop-tab-button--active"
+                    : "desktop-tab-button"
+                }
+                onClick={() => setActiveTabId("locations")}
+                type="button"
+              >
+                Locations
+              </button>
+              <button
+                className={
+                  activeTabId === "boardConnection"
+                    ? "desktop-tab-button desktop-tab-button--active"
+                    : "desktop-tab-button"
+                }
+                onClick={() => setActiveTabId("boardConnection")}
+                type="button"
+              >
+                Board Connection
+              </button>
+              <button
+                className={
+                  activeTabId === "boardTool"
+                    ? "desktop-tab-button desktop-tab-button--active"
+                    : "desktop-tab-button"
+                }
+                onClick={() => setActiveTabId("boardTool")}
+                type="button"
+              >
+                Board Install Tool
+              </button>
+            </nav>
+          </header>
 
-        <section className="desktop-settings-layout">
-          <article className="panel desktop-workspace-panel">
-            <div className="eyebrow">Scan folders</div>
-            <h2>Keep your local game folders in view.</h2>
-            <p className="panel-description">
-              BE Home can check these folders when you want to find downloads again later.
-            </p>
-            <div className="desktop-folder-list">
-              {desktopSettings.scanFolders.length === 0 ? (
-                <p className="desktop-folder-empty">
-                  You do not have any scan folders yet. Add one when you want BE Home to keep a
-                  folder in view.
-                </p>
-              ) : (
-                desktopSettings.scanFolders.map((folder) => (
-                  <article className="desktop-folder-card" key={folder.path}>
-                    <div className="desktop-folder-copy">
-                      <h3>{folder.path}</h3>
-                      <p className="desktop-folder-meta">
-                        {folder.source === "default" ? "App default" : "Custom"}
+          <section className="desktop-utility-body" aria-live="polite">
+            {activeTabId === "locations" ? (
+              <section className="desktop-settings-page">
+                <div className="eyebrow">Locations</div>
+                <h2>Choose where BE Home looks and saves.</h2>
+
+                <section className="desktop-settings-section">
+                  <div className="desktop-list-editor-header">
+                    <div>
+                      <span className="desktop-field-label">Games and apps folders</span>
+                      <p className="desktop-section-copy">
+                        BE Home checks these folders when you rescan this computer.
                       </p>
                     </div>
+                    {iconButton("add", "Add folder", () => void handleAddScanFolder(), busy)}
+                  </div>
+
+                  {desktopSettings.scanFolders.length === 0 ? (
+                    <div className="desktop-empty-note">
+                      No folders are selected. You can still choose games and apps manually.
+                    </div>
+                  ) : (
+                    <ul className="desktop-folder-list desktop-folder-list--compact">
+                      {desktopSettings.scanFolders.map((folder) => (
+                        <li className="desktop-folder-item" key={folder.path}>
+                          <div className="desktop-folder-copy">
+                            <p className="desktop-folder-path">{folder.path}</p>
+                            <p className="desktop-folder-meta">
+                              {folder.source === "default" ? "Recommended folder" : "Custom folder"}
+                            </p>
+                          </div>
+                          {iconButton(
+                            "remove",
+                            `Remove ${folder.path}`,
+                            () => void handleRemoveScanFolder(folder.path),
+                            busy,
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+
+                <section className="desktop-settings-section">
+                  <label className="desktop-field">
+                    <span className="desktop-field-label">Saved library folder</span>
+                    <div className="desktop-input-with-button">
+                      <input
+                        className="desktop-text-field"
+                        readOnly
+                        type="text"
+                        value={desktopSettings.apkLibrary.effectivePath}
+                      />
+                      {iconButton(
+                        "folder_open",
+                        "Choose saved library folder",
+                        () => void handleChangeLibraryLocation(),
+                        busy,
+                      )}
+                    </div>
+                  </label>
+                  <div className="desktop-recommended-row">
+                    <span className="desktop-recommended-badge">
+                      {desktopSettings.apkLibrary.overridePath === null ? "Recommended" : "Custom"}
+                    </span>
+                    {desktopSettings.apkLibrary.overridePath !== null ? (
+                      <button
+                        className="tertiary-button desktop-link-button"
+                        disabled={busy}
+                        onClick={() => void handleResetLibraryLocation()}
+                        type="button"
+                      >
+                        Use recommended location
+                      </button>
+                    ) : null}
+                  </div>
+                </section>
+
+                <section className="desktop-settings-section">
+                  <label className="desktop-field">
+                    <span className="desktop-field-label">Board Install Tool location</span>
+                    <div className="desktop-readonly-field">{desktopSettings.bdbExecutablePath}</div>
+                  </label>
+                </section>
+              </section>
+            ) : null}
+
+            {activeTabId === "boardConnection" ? (
+              <section className="desktop-settings-page">
+                <div className="eyebrow">Board Connection</div>
+                <h2>Choose how often BE Home checks your Board.</h2>
+                <p className="panel-description">
+                  BE Home only refreshes while its main window is visible.
+                </p>
+                <div className="desktop-radio-list" role="radiogroup" aria-label="Board refresh timing">
+                  {pollIntervalOptions.map((option) => (
                     <button
-                      className="secondary-button secondary-button--compact"
-                      disabled={settingsActionState.loading}
-                      onClick={() => void handleRemoveScanFolder(folder.path)}
+                      aria-checked={
+                        desktopSettings.boardConnection.pollIntervalSeconds === option.value
+                      }
+                      className={
+                        desktopSettings.boardConnection.pollIntervalSeconds === option.value
+                          ? "desktop-radio-card desktop-radio-card--active"
+                          : "desktop-radio-card"
+                      }
+                      disabled={busy}
+                      key={option.value}
+                      onClick={() => void handleChangePollInterval(option.value)}
+                      role="radio"
                       type="button"
                     >
-                      Remove
+                      <span className="desktop-radio-title">{option.label}</span>
+                      <span className="desktop-radio-copy">
+                        {option.value === 5
+                          ? "Recommended for most players."
+                          : option.value === 10
+                            ? "A little quieter while still feeling current."
+                            : "Best when you prefer fewer checks."}
+                      </span>
                     </button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
+            {activeTabId === "boardTool" ? (
+              <section className="desktop-settings-page">
+                <div className="eyebrow">Board Install Tool</div>
+                <h2>Keep the Board Install Tool ready.</h2>
+                <p className="panel-description">
+                  BE Home uses this helper to talk to your Board and install games and apps.
+                </p>
+
+                <div className="desktop-form-grid">
+                  <label className="desktop-field">
+                    <span className="desktop-field-label">Current version</span>
+                    <div className="desktop-readonly-field">
+                      {toolState.versionCheck.value ?? "Not installed yet"}
+                    </div>
+                  </label>
+                  <label className="desktop-field">
+                    <span className="desktop-field-label">Latest version in BE Home</span>
+                    <div className="desktop-readonly-field">
+                      {toolState.updateStatus.availableVersion ?? "Not available yet"}
+                    </div>
+                  </label>
+                  <label className="desktop-field">
+                    <span className="desktop-field-label">Install location</span>
+                    <div className="desktop-readonly-field">{toolState.executablePath}</div>
+                  </label>
+                </div>
+
+                <article className="desktop-inline-card">
+                  <h3>{toolState.summary}</h3>
+                  <p>{toolState.updateStatus.guidance}</p>
+                </article>
+
+                {toolState.supportRequestDraft !== null ? (
+                  <article className="desktop-inline-message desktop-inline-message--warning">
+                    <h3>This build of the Board Install Tool is not compatible with this computer.</h3>
+                    <p>BE Home can help you start a support email to Board with the exact error.</p>
+                    <div className="desktop-inline-button-row">
+                      <button
+                        className="secondary-button"
+                        onClick={() => setSupportDialogDraft(toolState.supportRequestDraft)}
+                        type="button"
+                      >
+                        Email Board Support...
+                      </button>
+                    </div>
                   </article>
-                ))
-              )}
-            </div>
-            <div className="desktop-action-row">
-              <button
-                className="primary-button"
-                disabled={settingsActionState.loading}
-                onClick={() => void handleAddScanFolder()}
-                type="button"
+                ) : null}
+
+                <div className="desktop-inline-button-row">
+                  <button
+                    className="primary-button"
+                    disabled={busy}
+                    onClick={() => void handleRepairOrReinstall()}
+                    type="button"
+                  >
+                    {busy ? "Working..." : toolActionLabel(toolState)}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    disabled={busy}
+                    onClick={() => void handleCheckForUpdate()}
+                    type="button"
+                  >
+                    Check for Update
+                  </button>
+                </div>
+              </section>
+            ) : null}
+
+            {inlineNotice !== null ? (
+              <article
+                className={
+                  inlineNotice.tone === "warning"
+                    ? "desktop-inline-message desktop-inline-message--warning"
+                    : inlineNotice.tone === "success"
+                      ? "desktop-inline-message desktop-inline-message--success"
+                      : "desktop-inline-message"
+                }
               >
-                Add scan folder
+                <h3>{inlineNotice.title}</h3>
+                {inlineNotice.detail !== null ? <p>{inlineNotice.detail}</p> : null}
+              </article>
+            ) : null}
+          </section>
+
+          <footer className="desktop-utility-footer">
+            <div />
+            <div className="desktop-utility-footer-actions">
+              <button className="primary-button" onClick={() => void handleCloseWindow()} type="button">
+                Done
               </button>
             </div>
-          </article>
+          </footer>
+        </section>
+      </section>
 
-          <article className="panel desktop-workspace-panel">
-            <div className="eyebrow">Managed APK library</div>
-            <h2>Keep your saved copies in one familiar place.</h2>
+      {supportDialogDraft !== null ? (
+        <section className="desktop-modal-scrim" role="presentation">
+          <article
+            aria-labelledby="settings-support-request-title"
+            className="panel desktop-modal-card"
+            role="dialog"
+          >
+            <div className="eyebrow">Board Support</div>
+            <h2 id="settings-support-request-title">Email Board Support</h2>
             <p className="panel-description">
-              This is where BE Home keeps the app-managed library of files you want to reuse later.
+              BE Home can open this draft in your mail app for you.
             </p>
-            <dl className="desktop-detail-grid">
-              <DetailRow label="Current location" value={desktopSettings.apkLibrary.effectivePath} />
-              <DetailRow
-                label="Location source"
-                value={locationSourceLabel(desktopSettings.apkLibrary)}
-              />
-            </dl>
-            <div className="desktop-action-row">
-              <button
-                className="primary-button"
-                disabled={settingsActionState.loading}
-                onClick={() => void handleChangeApkLibraryLocation()}
-                type="button"
-              >
-                Change library folder
-              </button>
-              {desktopSettings.apkLibrary.overridePath !== null ? (
-                <button
-                  className="secondary-button"
-                  disabled={settingsActionState.loading}
-                  onClick={() => void handleResetApkLibraryLocation()}
-                  type="button"
-                >
-                  Use app default
-                </button>
-              ) : null}
+            <div className="desktop-form-grid">
+              <label className="desktop-field">
+                <span className="desktop-field-label">To</span>
+                <div className="desktop-readonly-field">{supportDialogDraft.to}</div>
+              </label>
+              <label className="desktop-field">
+                <span className="desktop-field-label">Subject</span>
+                <div className="desktop-readonly-field">{supportDialogDraft.subject}</div>
+              </label>
+              <label className="desktop-field">
+                <span className="desktop-field-label">Email draft</span>
+                <textarea className="desktop-text-area" readOnly value={supportDialogDraft.body} />
+              </label>
             </div>
-          </article>
-
-          <article className="panel desktop-workspace-panel">
-            <div className="eyebrow">Board tool</div>
-            <h2>Keep Board's install tool ready.</h2>
-            <p className="panel-description">
-              This path is read-only here, but you can repair the managed Board tool when it needs
-              attention.
+            <p className="desktop-footnote">
+              Please enter your email address in the From field and add your name at the end before
+              sending.
             </p>
-            <dl className="desktop-detail-grid">
-              <DetailRow label="Managed bdb location" value={desktopSettings.bdbExecutablePath} />
-              <DetailRow label="Current state" value={setupGateState.toolState.summary} />
-              <DetailRow label="Settings file" value={desktopSettings.settingsFilePath} />
-            </dl>
-
-            <StatusSummaryCard
-              title="Current tool state"
-              summary={setupGateState.toolState.summary}
-              guidance={setupGateState.toolState.guidance}
-            />
-
-            <div className="desktop-action-row">
+            <div className="desktop-inline-button-row">
+              <button className="primary-button" onClick={() => void handleOpenSupportEmail()} type="button">
+                Open Mail App
+              </button>
+              <button className="secondary-button" onClick={() => void handleCopySupportDraft()} type="button">
+                Copy Email Draft
+              </button>
               <button
-                className="primary-button"
-                disabled={settingsActionState.loading}
-                onClick={() => void handleRepairFromSettings()}
+                className="tertiary-button"
+                onClick={() => setSupportDialogDraft(null)}
                 type="button"
               >
-                Repair bdb
+                Close
               </button>
             </div>
           </article>
         </section>
-
-        {settingsActionState.message !== null ? (
-          <article className="panel desktop-workspace-panel desktop-inline-message">
-            <h3>{settingsActionState.message}</h3>
-            {settingsActionState.detail !== null ? <p>{settingsActionState.detail}</p> : null}
-          </article>
-        ) : null}
-      </section>
+      ) : null}
     </main>
   );
 }

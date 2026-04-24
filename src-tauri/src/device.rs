@@ -1,4 +1,4 @@
-use crate::bdb_tool;
+use crate::{bdb_tool, storage};
 use serde::Serialize;
 use std::io;
 use std::path::Path;
@@ -6,7 +6,7 @@ use std::process::Command;
 
 const BDB_STATUS_ARGUMENT: &str = "status";
 const BDB_VERSION_ARGUMENT: &str = "version";
-const DEVICE_STATUS_POLL_INTERVAL_MS: u32 = 5_000;
+const DEFAULT_DEVICE_STATUS_POLL_INTERVAL_MS: u32 = 5_000;
 
 /// Describes the normalized connection state that the device workspace can consume.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -48,6 +48,7 @@ pub(crate) struct DeviceStatusSnapshot {
     pub(crate) summary: String,
     pub(crate) guidance: String,
     pub(crate) detail: Option<String>,
+    pub(crate) board_os_version: Option<String>,
     pub(crate) poll_interval_ms: u32,
     pub(crate) bdb_version: BdbVersionDetails,
 }
@@ -114,6 +115,7 @@ fn load_device_status_snapshot_with_runner<P: ProcessRunner>(
     tool_state: &bdb_tool::BdbToolState,
     runner: &P,
 ) -> DeviceStatusSnapshot {
+    let poll_interval_ms = current_poll_interval_ms();
     match tool_state.status {
         bdb_tool::BdbToolStatus::Unsupported => DeviceStatusSnapshot {
             status: DeviceStatusKind::UnsupportedHost,
@@ -121,7 +123,8 @@ fn load_device_status_snapshot_with_runner<P: ProcessRunner>(
                 .into(),
             guidance: tool_state.guidance.clone(),
             detail: None,
-            poll_interval_ms: DEVICE_STATUS_POLL_INTERVAL_MS,
+            board_os_version: None,
+            poll_interval_ms,
             bdb_version: unavailable_version_details(&tool_state.executable_path, tool_state.summary.clone()),
         },
         bdb_tool::BdbToolStatus::Missing => DeviceStatusSnapshot {
@@ -130,7 +133,8 @@ fn load_device_status_snapshot_with_runner<P: ProcessRunner>(
                 .into(),
             guidance: tool_state.guidance.clone(),
             detail: None,
-            poll_interval_ms: DEVICE_STATUS_POLL_INTERVAL_MS,
+            board_os_version: None,
+            poll_interval_ms,
             bdb_version: unavailable_version_details(
                 &tool_state.executable_path,
                 "BE Home has not downloaded bdb yet.".into(),
@@ -142,7 +146,8 @@ fn load_device_status_snapshot_with_runner<P: ProcessRunner>(
                 .into(),
             guidance: tool_state.guidance.clone(),
             detail: Some("Choose repair in settings to fetch a fresh copy of bdb.".into()),
-            poll_interval_ms: DEVICE_STATUS_POLL_INTERVAL_MS,
+            board_os_version: None,
+            poll_interval_ms,
             bdb_version: unavailable_version_details(
                 &tool_state.executable_path,
                 "BE Home could not trust the stored bdb copy enough to read its version.".into(),
@@ -159,6 +164,7 @@ fn inspect_runnable_device_status<P: ProcessRunner>(
     let executable_path = Path::new(&tool_state.executable_path);
     let version = load_bdb_version(executable_path, runner);
     let status_command = build_command_string(&tool_state.executable_path, BDB_STATUS_ARGUMENT);
+    let poll_interval_ms = current_poll_interval_ms();
 
     match runner.run(executable_path, &[BDB_STATUS_ARGUMENT]) {
         Ok(output) => normalize_status_output(output, version),
@@ -191,7 +197,8 @@ fn inspect_runnable_device_status<P: ProcessRunner>(
                 summary,
                 guidance,
                 detail,
-                poll_interval_ms: DEVICE_STATUS_POLL_INTERVAL_MS,
+                board_os_version: None,
+                poll_interval_ms,
                 bdb_version: version,
             }
         }
@@ -204,6 +211,13 @@ fn normalize_status_output(
 ) -> DeviceStatusSnapshot {
     let combined_text = combined_output_text(&output);
     let normalized_text = combined_text.to_ascii_lowercase();
+    let board_os_version =
+        extract_board_os_version(&combined_text).or_else(|| {
+            version
+                .value
+                .as_deref()
+                .and_then(extract_board_os_version)
+        });
 
     let (status, summary, guidance, detail) = if contains_any(
         &normalized_text,
@@ -250,7 +264,8 @@ fn normalize_status_output(
         summary,
         guidance,
         detail,
-        poll_interval_ms: DEVICE_STATUS_POLL_INTERVAL_MS,
+        board_os_version,
+        poll_interval_ms: current_poll_interval_ms(),
         bdb_version: version,
     }
 }
@@ -333,6 +348,18 @@ fn combined_output_text(output: &ProcessRunOutput) -> String {
         .join("\n")
 }
 
+fn extract_board_os_version(value: &str) -> Option<String> {
+    value.lines()
+        .map(str::trim)
+        .find_map(|line| {
+            let lower = line.to_ascii_lowercase();
+            lower
+                .strip_prefix("board os version:")
+                .map(|_| line["Board OS Version:".len()..].trim().to_owned())
+        })
+        .filter(|version| !version.is_empty())
+}
+
 fn contains_any(value: &str, candidates: &[&str]) -> bool {
     candidates.iter().any(|candidate| value.contains(candidate))
 }
@@ -359,6 +386,12 @@ fn build_command_string(executable_path: &str, argument: &str) -> String {
     format!("{executable_path} {argument}")
 }
 
+fn current_poll_interval_ms() -> u32 {
+    storage::load_desktop_settings()
+        .map(|settings| settings.board_connection.poll_interval_seconds.saturating_mul(1000))
+        .unwrap_or(DEFAULT_DEVICE_STATUS_POLL_INTERVAL_MS)
+}
+
 fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
@@ -375,7 +408,10 @@ mod tests {
             BdbArchitecture, BdbDownloadSource, BdbOperatingSystem, BdbPlatformSupport,
             BdbSourcePlan, BdbSupportStatus,
         },
-        bdb_tool::{BdbRunnableStatus, BdbRunnableValidation, BdbToolState, BdbToolStatus},
+        bdb_tool::{
+            BdbRunnableStatus, BdbRunnableValidation, BdbToolState, BdbToolStatus,
+            BdbToolVersionCheck, BdbToolVersionStatus, BdbUpdateStatus, BdbUpdateStatusKind,
+        },
         storage::{ManagedStorageLocation, ManagedStoragePathSource},
     };
     use std::path::Path;
@@ -564,8 +600,26 @@ mod tests {
                 source: Some(BdbDownloadSource {
                     platform_key: "linux-x86_64".into(),
                     download_url: "https://example.com/bdb".into(),
+                    version: None,
                 }),
             },
+            version_check: BdbToolVersionCheck {
+                status: BdbToolVersionStatus::Available,
+                command: "/tmp/bdb version".into(),
+                value: Some("Board OS Version: 1.8.1".into()),
+                exit_code: Some(0),
+                summary: "Installed version: Board OS Version: 1.8.1".into(),
+                detail: None,
+            },
+            update_status: BdbUpdateStatus {
+                status: BdbUpdateStatusKind::UpToDate,
+                current_version: Some("Board OS Version: 1.8.1".into()),
+                available_version: Some("Board OS Version: 1.8.1".into()),
+                guidance:
+                    "This Board Install Tool matches the latest version in BE Home's source list."
+                        .into(),
+            },
+            support_request_draft: None,
             validation: BdbRunnableValidation {
                 status: runnable_status,
                 command: "/tmp/bdb help".into(),

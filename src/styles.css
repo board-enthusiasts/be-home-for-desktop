@@ -1,9 +1,9 @@
-@import url("https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700;800&family=Syne:wght@700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700;800&family=Syne:wght@700;800&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&display=swap");
 @import "tailwindcss";
 
 @theme {
   --font-body: "Public Sans", "Segoe UI", sans-serif;
-  --font-display: "Syne", "Trebuchet MS", sans-serif;
+  --font-display: "Syne", "Segoe UI", sans-serif;
 }
 
 @layer base {
@@ -11,10 +11,51 @@
     box-sizing: border-box;
   }
 
+  :root {
+    --desktop-accent: #4be09a;
+    --desktop-accent-strong: #3bb781;
+    --desktop-warning: #f4bb59;
+    --desktop-danger: #f06969;
+    --desktop-neutral: #7ea0ff;
+    --desktop-radius-lg: 1.4rem;
+    --desktop-radius-md: 1rem;
+    --desktop-radius-sm: 0.8rem;
+  }
+
+  html[data-theme="dark"] {
+    --desktop-bg: #151319;
+    --desktop-bg-alt: #1d1a22;
+    --desktop-surface: rgba(27, 24, 33, 0.92);
+    --desktop-surface-strong: rgba(20, 18, 25, 0.95);
+    --desktop-surface-muted: rgba(255, 255, 255, 0.03);
+    --desktop-border: rgba(118, 255, 170, 0.18);
+    --desktop-border-strong: rgba(118, 255, 170, 0.34);
+    --desktop-text: #f7f2e8;
+    --desktop-text-muted: rgba(223, 229, 240, 0.82);
+    --desktop-text-soft: rgba(223, 229, 240, 0.68);
+    --desktop-shadow: 0 24px 60px rgba(0, 0, 0, 0.34);
+    color-scheme: dark;
+  }
+
+  html[data-theme="light"] {
+    --desktop-bg: #eef4f6;
+    --desktop-bg-alt: #f7fbfc;
+    --desktop-surface: rgba(255, 255, 255, 0.95);
+    --desktop-surface-strong: rgba(255, 255, 255, 0.98);
+    --desktop-surface-muted: rgba(12, 31, 32, 0.04);
+    --desktop-border: rgba(36, 104, 83, 0.18);
+    --desktop-border-strong: rgba(36, 104, 83, 0.28);
+    --desktop-text: #142125;
+    --desktop-text-muted: rgba(20, 33, 37, 0.82);
+    --desktop-text-soft: rgba(20, 33, 37, 0.62);
+    --desktop-shadow: 0 20px 42px rgba(15, 39, 49, 0.12);
+    color-scheme: light;
+  }
+
   html {
     font-family: var(--font-body);
-    color: #f7f2e8;
-    background-color: #17151a;
+    color: var(--desktop-text);
+    background-color: var(--desktop-bg);
     overflow-x: clip;
   }
 
@@ -22,17 +63,26 @@
     min-height: 100vh;
     margin: 0;
     background:
-      radial-gradient(circle at top left, rgba(243, 154, 46, 0.18), transparent 28%),
-      radial-gradient(circle at top right, rgba(77, 117, 244, 0.18), transparent 24%),
-      radial-gradient(circle at 50% 0%, rgba(255, 251, 240, 0.08), transparent 38%),
-      linear-gradient(180deg, #17151a 0%, #1d1a20 50%, #151318 100%);
-    color: #f7f2e8;
+      radial-gradient(circle at top left, rgba(243, 154, 46, 0.18), transparent 24%),
+      radial-gradient(circle at top right, rgba(77, 117, 244, 0.18), transparent 20%),
+      linear-gradient(180deg, var(--desktop-bg) 0%, var(--desktop-bg-alt) 100%);
+    color: var(--desktop-text);
     overflow-x: clip;
   }
 
   #root {
     min-height: 100vh;
     overflow-x: clip;
+  }
+
+  button,
+  input,
+  textarea {
+    font: inherit;
+  }
+
+  textarea {
+    resize: vertical;
   }
 }
 
@@ -48,87 +98,85 @@
 
   .page-grid.narrow {
     width: 100%;
-    max-width: 48rem;
+    max-width: 64rem;
     margin: 0 auto;
   }
 
   .panel,
   .hero-panel {
-    padding: 1.5rem;
-    border: 1px solid rgba(118, 255, 170, 0.38);
-    border-radius: 1.75rem;
+    border: 1px solid var(--desktop-border);
+    border-radius: 1.5rem;
     background:
-      radial-gradient(circle at 16% 0%, rgba(96, 255, 164, 0.1), transparent 24%),
-      radial-gradient(circle at 100% 14%, rgba(77, 117, 244, 0.12), transparent 22%),
-      linear-gradient(180deg, rgba(37, 34, 41, 0.97), rgba(26, 24, 31, 0.97));
-    box-shadow:
-      inset 0 1px 0 rgba(235, 255, 244, 0.04),
-      0 0 0 1px rgba(118, 255, 170, 0.08),
-      0 0 18px rgba(118, 255, 170, 0.16),
-      0 0 42px rgba(118, 255, 170, 0.08),
-      0 18px 52px rgba(8, 8, 12, 0.34),
-      0 0 22px rgba(64, 198, 141, 0.12);
+      radial-gradient(circle at 0% 0%, rgba(75, 224, 154, 0.08), transparent 26%),
+      radial-gradient(circle at 100% 0%, rgba(126, 160, 255, 0.08), transparent 20%),
+      var(--desktop-surface);
+    box-shadow: var(--desktop-shadow);
     backdrop-filter: blur(18px);
   }
 
-  .hero-copy {
-    position: relative;
-    z-index: 1;
-    max-width: 48rem;
+  .panel {
+    padding: 1.5rem;
+  }
+
+  .hero-panel {
+    padding: 1.75rem;
   }
 
   .eyebrow {
     font-size: 0.75rem;
-    font-weight: 600;
-    letter-spacing: 0.24em;
+    font-weight: 700;
+    letter-spacing: 0.2em;
     text-transform: uppercase;
-    color: rgba(220, 247, 234, 0.75);
+    color: var(--desktop-text-soft);
   }
 
   .panel h2,
-  .hero-panel h1 {
-    margin: 0.75rem 0 0;
+  .hero-panel h1,
+  .panel h1 {
+    margin: 0.6rem 0 0;
     font-family: var(--font-display);
-    color: #ffffff;
+    color: var(--desktop-text);
+  }
+
+  .panel h1 {
+    font-size: clamp(1.8rem, 2.6vw, 2.4rem);
+    line-height: 1.08;
   }
 
   .panel h2 {
-    font-size: clamp(1.75rem, 2vw, 2rem);
-    font-weight: 700;
+    font-size: clamp(1.4rem, 2vw, 1.9rem);
+    line-height: 1.14;
   }
 
   .hero-panel h1 {
-    font-size: clamp(2.5rem, 4vw, 3.5rem);
-    font-weight: 800;
-    letter-spacing: 0.03em;
-    line-height: 0.96;
+    font-size: clamp(2.3rem, 3.4vw, 3.1rem);
+    line-height: 1;
     text-transform: uppercase;
   }
 
-  .hero-panel.compact h1 {
-    font-size: clamp(2.2rem, 3.6vw, 3rem);
-  }
-
-  .hero-panel p,
-  .panel-description {
+  .panel-description,
+  .hero-panel p {
     margin: 0.75rem 0 0;
-    font-size: 1rem;
-    line-height: 1.9;
-    color: rgb(203 213 225 / 1);
+    color: var(--desktop-text-muted);
+    line-height: 1.7;
   }
 
-  .status-chip {
-    display: inline-flex;
-    align-items: center;
+  .material-symbols-outlined {
+    font-family: "Material Symbols Outlined";
+    font-weight: normal;
+    font-style: normal;
+    font-size: 1.1rem;
+    line-height: 1;
+    display: inline-block;
+    text-transform: none;
+    letter-spacing: normal;
+    word-wrap: normal;
     white-space: nowrap;
-    border-radius: 999px;
-    border: 1px solid rgba(118, 255, 170, 0.2);
-    background: rgba(64, 198, 141, 0.1);
-    padding: 0.25rem 0.75rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: rgb(220 247 234 / 1);
+    direction: ltr;
+    font-variation-settings:
+      "FILL" 0,
+      "wght" 400,
+      "GRAD" 0,
+      "opsz" 24;
   }
 }
