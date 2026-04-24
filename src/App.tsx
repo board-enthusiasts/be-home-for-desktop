@@ -793,8 +793,8 @@ function InstalledTitlesWorkspacePanel({
         <div className="eyebrow">Installed on Board</div>
         <h2>Keep the current Board inventory in one stable place.</h2>
         <p className="panel-description">
-          This view turns `bdb list` into a title model the later uninstall and launch work can
-          reuse, without asking the renderer to parse command output on its own.
+          This view keeps the titles Board is already reporting in one easy place, so you can
+          confirm what is on the device before you reach for another install.
         </p>
 
         {snapshot !== null ? (
@@ -849,8 +849,8 @@ function InstalledTitlesWorkspacePanel({
         <div className="eyebrow">Current inventory</div>
         <h2>See the titles Board is already reporting.</h2>
         <p className="panel-description">
-          Package identity stays with each entry when BE Home can read it, so later launch and
-          uninstall actions have a stable place to start.
+          When Board shares package details, BE Home keeps them with each entry so the list stays
+          specific and dependable.
         </p>
 
         {snapshot === null ? (
