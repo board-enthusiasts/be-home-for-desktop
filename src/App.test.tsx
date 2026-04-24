@@ -296,6 +296,34 @@ const installSuccessResultFixture: InstallApkResult = {
   exitCode: 0,
 };
 
+const uninstallSuccessResultFixture = {
+  status: "removed",
+  summary: "BE Home removed Lucky Dice from Board.",
+  guidance:
+    "The device and installed-title views will refresh now so the inventory can catch up.",
+  detail: "Removed fun.board.luckydice",
+  command:
+    "C:\\Users\\Matt\\AppData\\Local\\Board Enthusiasts\\BE Home for Desktop\\tools\\bdb.exe remove fun.board.luckydice",
+  exitCode: 0,
+} as const;
+
+const installedTitlesAfterUninstallFixture: InstalledTitlesSnapshot = {
+  status: "ready",
+  summary: "Board reported 1 installed title(s).",
+  guidance:
+    "This list is ready for the later uninstall and launch actions that stay tied to package identity.",
+  titles: [
+    {
+      stableId: "package:fun.board.familymatch",
+      displayName: "Family Match",
+      packageName: "fun.board.familymatch",
+      subtitle: "fun.board.familymatch",
+      canLaunch: true,
+      canUninstall: true,
+    },
+  ],
+};
+
 const unsupportedSetupFixture: SetupGateState = {
   ...missingToolFixture,
   status: "unsupported",
@@ -1118,6 +1146,66 @@ describe("App", () => {
         "BE Home could not find the APK file at `C:\\Users\\Matt\\Downloads\\LuckyDice.apk` anymore.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("confirms and refreshes the installed inventory after removing a title", async () => {
+    let deviceStatusReads = 0;
+    let installedTitlesReads = 0;
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "load_setup_gate_state") {
+        return runnableFixture;
+      }
+
+      if (command === "load_desktop_settings") {
+        return desktopSettingsFixture;
+      }
+
+      if (command === "load_device_status_snapshot") {
+        deviceStatusReads += 1;
+        return deviceStatusFixture;
+      }
+
+      if (command === "load_installed_titles_snapshot") {
+        installedTitlesReads += 1;
+        return installedTitlesReads === 1
+          ? installedTitlesFixture
+          : installedTitlesAfterUninstallFixture;
+      }
+
+      if (command === "load_apk_discovery_snapshot") {
+        return apkDiscoveryFixture;
+      }
+
+      if (command === "load_managed_apk_library_snapshot") {
+        return emptyManagedLibraryFixture;
+      }
+
+      if (command === "uninstall_installed_title_from_board") {
+        return uninstallSuccessResultFixture;
+      }
+
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Your desktop install space is ready")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Installed on Board/ }));
+
+    fireEvent.click((await screen.findAllByRole("button", { name: "Remove from Board" }))[0]);
+    expect(screen.getByRole("button", { name: "Confirm remove" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm remove" }));
+
+    expect(await screen.findByText("BE Home removed Lucky Dice from Board.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(deviceStatusReads).toBeGreaterThanOrEqual(2);
+      expect(installedTitlesReads).toBeGreaterThanOrEqual(2);
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("Lucky Dice")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("Family Match")).toBeInTheDocument();
   });
 
   it("shows a friendly host failure message", async () => {

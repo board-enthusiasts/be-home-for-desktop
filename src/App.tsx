@@ -13,6 +13,7 @@ import {
   loadManagedApkLibrarySnapshot,
   loadSetupGateState,
   saveDesktopSettings,
+  uninstallInstalledTitleFromBoard,
 } from "./desktop/client";
 import type {
   ApkCandidate,
@@ -27,6 +28,7 @@ import type {
   ManagedApkLibrarySnapshot,
   ManagedStorageLocation,
   SetupGateState,
+  UninstallInstalledTitleResult,
 } from "./desktop/types";
 
 type SetupViewStep = "systemCheck" | "toolSetup" | "reviewDefaults";
@@ -202,6 +204,19 @@ function App() {
     lastStatus: null,
   });
   const apkInstallInFlightRef = useRef(false);
+  const [installedTitleActionState, setInstalledTitleActionState] = useState<{
+    actionPackage: string | null;
+    confirmPackage: string | null;
+    message: string | null;
+    detail: string | null;
+    lastStatus: UninstallInstalledTitleResult["status"] | null;
+  }>({
+    actionPackage: null,
+    confirmPackage: null,
+    message: null,
+    detail: null,
+    lastStatus: null,
+  });
   const [windowFocused, setWindowFocused] = useState(true);
   const [documentVisible, setDocumentVisible] = useState(
     typeof document === "undefined" ? true : document.visibilityState !== "hidden",
@@ -790,6 +805,63 @@ function App() {
     }
   }
 
+  function handleRequestUninstall(packageName: string): void {
+    setInstalledTitleActionState((previous) => ({
+      ...previous,
+      confirmPackage: packageName,
+      message: null,
+      detail: null,
+      lastStatus: null,
+    }));
+  }
+
+  function handleCancelUninstall(): void {
+    setInstalledTitleActionState((previous) => ({
+      ...previous,
+      confirmPackage: null,
+    }));
+  }
+
+  async function handleUninstallInstalledTitle(
+    packageName: string,
+    displayName: string,
+  ): Promise<UninstallInstalledTitleResult | null> {
+    setInstalledTitleActionState({
+      actionPackage: packageName,
+      confirmPackage: packageName,
+      message: null,
+      detail: null,
+      lastStatus: null,
+    });
+
+    try {
+      const result = await uninstallInstalledTitleFromBoard(packageName, displayName);
+      setInstalledTitleActionState({
+        actionPackage: null,
+        confirmPackage: null,
+        message: result.summary,
+        detail: result.detail ?? result.guidance,
+        lastStatus: result.status,
+      });
+
+      if (result.status === "removed") {
+        await refreshDeviceStatus("manual");
+        await refreshInstalledTitles("manual");
+      }
+
+      return result;
+    } catch {
+      setInstalledTitleActionState({
+        actionPackage: null,
+        confirmPackage: null,
+        message: `BE Home couldn't remove ${displayName} just yet.`,
+        detail: "Please keep Board connected and try removing the title again in a moment.",
+        lastStatus: "failed",
+      });
+      return null;
+    }
+  }
+
   async function handleChooseManualApk(): Promise<void> {
     const selectedPath = await pickSinglePath(
       await open({
@@ -1001,8 +1073,14 @@ function App() {
                 />
               ) : activeWorkspaceSection === "installed" ? (
                 <InstalledTitlesWorkspacePanel
+                  installedTitleActionState={installedTitleActionState}
                   installedTitlesState={installedTitlesState}
+                  onCancelUninstall={() => handleCancelUninstall()}
                   onRefresh={() => void refreshInstalledTitles("manual")}
+                  onRequestUninstall={(packageName) => handleRequestUninstall(packageName)}
+                  onUninstallTitle={(packageName, displayName) =>
+                    void handleUninstallInstalledTitle(packageName, displayName)
+                  }
                 />
               ) : activeWorkspaceSection === "apkLibrary" ? (
                 <ApkLibraryWorkspacePanel
@@ -1431,18 +1509,32 @@ function ApkLibraryWorkspacePanel({
 }
 
 interface InstalledTitlesWorkspacePanelProps {
+  installedTitleActionState: {
+    actionPackage: string | null;
+    confirmPackage: string | null;
+    message: string | null;
+    detail: string | null;
+    lastStatus: UninstallInstalledTitleResult["status"] | null;
+  };
   installedTitlesState: {
     loading: boolean;
     snapshot: InstalledTitlesSnapshot | null;
     errorMessage: string | null;
     errorDetail: string | null;
   };
+  onCancelUninstall: () => void;
   onRefresh: () => void;
+  onRequestUninstall: (packageName: string) => void;
+  onUninstallTitle: (packageName: string, displayName: string) => void;
 }
 
 function InstalledTitlesWorkspacePanel({
+  installedTitleActionState,
   installedTitlesState,
+  onCancelUninstall,
   onRefresh,
+  onRequestUninstall,
+  onUninstallTitle,
 }: InstalledTitlesWorkspacePanelProps) {
   const snapshot = installedTitlesState.snapshot;
   const launchReadyCount =
@@ -1475,6 +1567,21 @@ function InstalledTitlesWorkspacePanel({
             <h3>{installedTitlesState.errorMessage}</h3>
             {installedTitlesState.errorDetail !== null ? (
               <p>{installedTitlesState.errorDetail}</p>
+            ) : null}
+          </article>
+        ) : null}
+
+        {installedTitleActionState.message !== null ? (
+          <article
+            className={
+              installedTitleActionState.lastStatus === "failed"
+                ? "desktop-inline-message desktop-inline-message--warning"
+                : "desktop-inline-message"
+            }
+          >
+            <h3>{installedTitleActionState.message}</h3>
+            {installedTitleActionState.detail !== null ? (
+              <p>{installedTitleActionState.detail}</p>
             ) : null}
           </article>
         ) : null}
@@ -1530,13 +1637,50 @@ function InstalledTitlesWorkspacePanel({
                       "Package identity is not available yet for this installed title."}
                   </p>
                 </div>
-                <div className="desktop-inventory-meta">
-                  <span className="desktop-inventory-pill">
-                    {title.canLaunch ? "Launch ready" : "Package needed"}
-                  </span>
-                  <span className="desktop-inventory-pill">
-                    {title.canUninstall ? "Uninstall ready" : "Read only"}
-                  </span>
+                <div className="desktop-inventory-side">
+                  <div className="desktop-inventory-meta">
+                    <span className="desktop-inventory-pill">
+                      {title.canLaunch ? "Launch ready" : "Package needed"}
+                    </span>
+                    <span className="desktop-inventory-pill">
+                      {title.canUninstall ? "Uninstall ready" : "Read only"}
+                    </span>
+                  </div>
+                  {title.packageName !== null && title.canUninstall ? (
+                    installedTitleActionState.confirmPackage === title.packageName ? (
+                      <div className="desktop-inline-action-stack">
+                        <button
+                          className="primary-button desktop-inline-button"
+                          disabled={installedTitleActionState.actionPackage === title.packageName}
+                          onClick={() =>
+                            onUninstallTitle(title.packageName!, title.displayName)
+                          }
+                          type="button"
+                        >
+                          {installedTitleActionState.actionPackage === title.packageName
+                            ? "Removing..."
+                            : "Confirm remove"}
+                        </button>
+                        <button
+                          className="tertiary-button desktop-inline-button"
+                          disabled={installedTitleActionState.actionPackage === title.packageName}
+                          onClick={onCancelUninstall}
+                          type="button"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        className="secondary-button desktop-inline-button"
+                        disabled={installedTitleActionState.actionPackage === title.packageName}
+                        onClick={() => onRequestUninstall(title.packageName!)}
+                        type="button"
+                      >
+                        Remove from Board
+                      </button>
+                    )
+                  ) : null}
                 </div>
               </li>
             ))}
