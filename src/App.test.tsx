@@ -153,6 +153,56 @@ const deviceStatusFixture: DeviceStatusSnapshot = {
   },
 };
 
+const disconnectedDeviceStatusFixture: DeviceStatusSnapshot = {
+  ...deviceStatusFixture,
+  status: "boardDisconnected",
+  summary: "Board is not connected yet.",
+  guidance: "Connect your Board with USB, unlock it if needed, then choose refresh.",
+  detail:
+    "Once Board is connected, BE Home will keep install and inventory actions close by.",
+};
+
+const brokenToolDeviceStatusFixture: DeviceStatusSnapshot = {
+  ...deviceStatusFixture,
+  status: "toolBroken",
+  summary:
+    "BE Home found the Board install tool, but this computer is not letting it run cleanly yet.",
+  guidance: "Choose repair in settings to fetch a fresh copy of bdb, then try again.",
+  detail: "Choose repair in settings to fetch a fresh copy of bdb.",
+};
+
+const unsupportedSetupFixture: SetupGateState = {
+  ...missingToolFixture,
+  status: "unsupported",
+  requiredStep: "systemCheck",
+  summary: "This computer cannot complete the Board install-tool setup yet.",
+  guidance:
+    "Board currently publishes bdb only for macOS, Linux amd64, and Windows 11 x86_64.",
+  toolState: {
+    ...missingToolFixture.toolState,
+    status: "unsupported",
+    summary: "This computer is outside Board's current bdb support matrix.",
+    guidance:
+      "Board currently publishes bdb only for macOS, Linux amd64, and Windows 11 x86_64.",
+    sourcePlan: {
+      ...missingToolFixture.toolState.sourcePlan,
+      support: {
+        ...missingToolFixture.toolState.sourcePlan.support,
+        status: "unsupported",
+        platformKey: null,
+        reason: "unsupportedOperatingSystemVersion",
+      },
+      source: null,
+    },
+    validation: {
+      ...missingToolFixture.toolState.validation,
+      status: "unsupported",
+      summary:
+        "BE Home skipped the bdb runnable check because Board does not publish a supported download for this computer.",
+    },
+  },
+};
+
 describe("App", () => {
   beforeEach(() => {
     invokeMock.mockReset();
@@ -414,6 +464,118 @@ describe("App", () => {
       await screen.findByText("BE Home could not confirm which bdb version is loaded right now."),
     ).toBeInTheDocument();
     expect(screen.getByText("version probe failed")).toBeInTheDocument();
+  });
+
+  it("shows friendly recovery guidance when Board is disconnected", async () => {
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "load_setup_gate_state") {
+        return runnableFixture;
+      }
+
+      if (command === "load_desktop_settings") {
+        return desktopSettingsFixture;
+      }
+
+      if (command === "load_device_status_snapshot") {
+        return disconnectedDeviceStatusFixture;
+      }
+
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    render(<App />);
+
+    expect(
+      await screen.findByText("Connect Board and refresh when you're ready."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Connect Board to this computer with USB.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refresh device check" })).toBeInTheDocument();
+  });
+
+  it("offers a direct settings path when bdb needs repair", async () => {
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "load_setup_gate_state") {
+        return runnableFixture;
+      }
+
+      if (command === "load_desktop_settings") {
+        return desktopSettingsFixture;
+      }
+
+      if (command === "load_device_status_snapshot") {
+        return brokenToolDeviceStatusFixture;
+      }
+
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    render(<App />);
+
+    expect(
+      await screen.findByText(
+        "Board's install tool needs a quick repair before device checks can continue.",
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+
+    expect(await screen.findByText("Keep folders and storage understandable.")).toBeInTheDocument();
+  });
+
+  it("keeps manual refresh available when the first device check fails", async () => {
+    let deviceStatusReads = 0;
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "load_setup_gate_state") {
+        return runnableFixture;
+      }
+
+      if (command === "load_desktop_settings") {
+        return desktopSettingsFixture;
+      }
+
+      if (command === "load_device_status_snapshot") {
+        deviceStatusReads += 1;
+        if (deviceStatusReads === 1) {
+          throw new Error("temporary device failure");
+        }
+
+        return deviceStatusFixture;
+      }
+
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    render(<App />);
+
+    expect(
+      await screen.findByText("BE Home couldn't refresh the latest Board connection check."),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh device check" }));
+
+    expect(await screen.findByText("Board connection looks ready.")).toBeInTheDocument();
+    expect(deviceStatusReads).toBe(2);
+  });
+
+  it("guides unsupported hosts during the setup check", async () => {
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "load_setup_gate_state") {
+        return unsupportedSetupFixture;
+      }
+
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    render(<App />);
+
+    expect(
+      await screen.findByText("This computer is outside Board's current supported desktop list."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "If Board expands desktop support later, you can come back and refresh this check again from here.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("shows a friendly host failure message", async () => {

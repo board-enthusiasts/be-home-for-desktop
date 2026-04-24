@@ -29,6 +29,20 @@ interface WorkspaceSection {
   bullets: string[];
 }
 
+type DeviceGuidanceAction = "refresh" | "settings";
+
+interface DeviceGuidanceContent {
+  eyebrow: string;
+  title: string;
+  summary: string;
+  steps: string[];
+  tone: "success" | "warning" | "neutral";
+  primaryAction: DeviceGuidanceAction;
+  primaryActionLabel: string;
+  secondaryAction?: DeviceGuidanceAction;
+  secondaryActionLabel?: string;
+}
+
 const DEFAULT_DEVICE_POLL_INTERVAL_MS = 5_000;
 
 const workspaceSections: WorkspaceSection[] = [
@@ -643,6 +657,7 @@ function App() {
                   deviceStatusState={deviceStatusState}
                   pollingActive={devicePollingActive}
                   setupGateState={setupGateState}
+                  onOpenSettings={() => setActiveWorkspaceSection("settings")}
                   onRefresh={() => void refreshDeviceStatus("manual")}
                 />
               ) : (
@@ -696,6 +711,7 @@ interface DeviceWorkspacePanelProps {
   };
   pollingActive: boolean;
   setupGateState: SetupGateState;
+  onOpenSettings: () => void;
   onRefresh: () => void;
 }
 
@@ -703,9 +719,13 @@ function DeviceWorkspacePanel({
   deviceStatusState,
   pollingActive,
   setupGateState,
+  onOpenSettings,
   onRefresh,
 }: DeviceWorkspacePanelProps) {
   const snapshot = deviceStatusState.snapshot;
+  const guidanceContent = snapshot
+    ? buildDeviceGuidanceContent(snapshot, setupGateState)
+    : null;
 
   return (
     <>
@@ -783,42 +803,88 @@ function DeviceWorkspacePanel({
             />
           </>
         )}
-
-        <div className="desktop-action-row">
-          <button
-            className="secondary-button"
-            disabled={deviceStatusState.loading}
-            onClick={onRefresh}
-            type="button"
-          >
-            {deviceStatusState.loading ? "Refreshing..." : "Refresh device check"}
-          </button>
-        </div>
       </article>
 
-      <article className="panel desktop-workspace-panel">
-        <div className="eyebrow">Managed tool</div>
-        <h2>Keep the session details and fallback path nearby.</h2>
-        <p className="panel-description">
-          The desktop app keeps the Board install tool in a managed location so connection checks,
-          installs, and repairs all point to the same trusted copy.
-        </p>
-        <dl className="desktop-detail-grid">
-          <DetailRow label="Tool state" value={setupGateState.toolState.summary} />
-          <DetailRow
-            label="Runnable check"
-            value={setupGateState.toolState.validation.summary}
-          />
-          <DetailRow
-            label="Source manifest"
-            value={setupGateState.toolState.sourcePlan.manifestSource}
-          />
-          <DetailRow
-            label="Managed tool folder"
-            value={setupGateState.toolState.storage.effectivePath}
-          />
-        </dl>
-      </article>
+      {guidanceContent === null ? (
+        <article className="panel desktop-workspace-panel">
+          <div className="eyebrow">Recovery help</div>
+          <h2>We’ll load the right next steps after the first device check.</h2>
+          <p className="panel-description">
+            Once BE Home has the current Board status, this area will turn it into simple recovery
+            guidance instead of terminal-style troubleshooting.
+          </p>
+          <div className="desktop-action-row">
+            <button
+              className="secondary-button"
+              disabled={deviceStatusState.loading}
+              onClick={onRefresh}
+              type="button"
+            >
+              {deviceStatusState.loading ? "Refreshing..." : "Refresh device check"}
+            </button>
+          </div>
+        </article>
+      ) : (
+        <article
+          className={`panel desktop-workspace-panel desktop-guidance-panel desktop-guidance-panel--${guidanceContent.tone}`}
+        >
+          <div className="eyebrow">{guidanceContent.eyebrow}</div>
+          <h2>{guidanceContent.title}</h2>
+          <p className="panel-description">{guidanceContent.summary}</p>
+          <ol className="desktop-guidance-list">
+            {guidanceContent.steps.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+          <dl className="desktop-detail-grid">
+            <DetailRow label="Tool state" value={setupGateState.toolState.summary} />
+            <DetailRow
+              label="Runnable check"
+              value={setupGateState.toolState.validation.summary}
+            />
+            <DetailRow
+              label="Source manifest"
+              value={setupGateState.toolState.sourcePlan.manifestSource}
+            />
+            <DetailRow
+              label="Managed tool folder"
+              value={setupGateState.toolState.storage.effectivePath}
+            />
+          </dl>
+          <div className="desktop-action-row">
+            <button
+              className="primary-button"
+              disabled={deviceStatusState.loading}
+              onClick={
+                guidanceContent.primaryAction === "settings" ? onOpenSettings : onRefresh
+              }
+              type="button"
+            >
+              {guidanceContent.primaryAction === "refresh" && deviceStatusState.loading
+                ? "Refreshing..."
+                : guidanceContent.primaryActionLabel}
+            </button>
+            {guidanceContent.secondaryAction !== undefined &&
+            guidanceContent.secondaryActionLabel !== undefined ? (
+              <button
+                className="secondary-button"
+                disabled={deviceStatusState.loading}
+                onClick={
+                  guidanceContent.secondaryAction === "settings"
+                    ? onOpenSettings
+                    : onRefresh
+                }
+                type="button"
+              >
+                {guidanceContent.secondaryAction === "refresh" &&
+                deviceStatusState.loading
+                  ? "Refreshing..."
+                  : guidanceContent.secondaryActionLabel}
+              </button>
+            ) : null}
+          </div>
+        </article>
+      )}
     </>
   );
 }
@@ -880,6 +946,17 @@ function SystemCheckStep({
         summary={setupGateState.toolState.summary}
         guidance={setupGateState.toolState.guidance}
       />
+
+      {isBlocked ? (
+        <article className="desktop-inline-message desktop-inline-message--warning">
+          <h3>This computer is outside Board's current supported desktop list.</h3>
+          <p>{setupGateState.toolState.guidance}</p>
+          <p>
+            If Board expands desktop support later, you can come back and refresh this check
+            again from here.
+          </p>
+        </article>
+      ) : null}
 
       <div className="desktop-action-row">
         <button
@@ -1339,6 +1416,109 @@ function deviceStatusTone(
     case "unsupportedHost":
     default:
       return "neutral";
+  }
+}
+
+function buildDeviceGuidanceContent(
+  snapshot: DeviceStatusSnapshot,
+  setupGateState: SetupGateState,
+): DeviceGuidanceContent {
+  switch (snapshot.status) {
+    case "boardConnected":
+      return {
+        eyebrow: "Ready to use",
+        title: "Board is connected and the desktop workspace can stay ahead of you.",
+        summary:
+          "You can move into local APK work, installed-title refreshes, and later install actions without leaving the desktop flow.",
+        steps: [
+          "Keep Board connected with USB while you install or refresh titles.",
+          "Use APK Library when you want to work from local files or managed copies.",
+          "Refresh this panel again any time you reconnect the cable or wake the device.",
+        ],
+        tone: "success",
+        primaryAction: "refresh",
+        primaryActionLabel: "Refresh device check",
+      };
+    case "boardDisconnected":
+      return {
+        eyebrow: "Reconnect Board",
+        title: "Connect Board and refresh when you're ready.",
+        summary:
+          "BE Home can finish device-aware work once Board is connected again, so this state stays focused on the quickest path back.",
+        steps: [
+          "Connect Board to this computer with USB.",
+          "Wake the Board screen and leave it on the main device UI for a moment.",
+          "Choose refresh here once the cable and device both look settled.",
+        ],
+        tone: "warning",
+        primaryAction: "refresh",
+        primaryActionLabel: "Refresh device check",
+      };
+    case "toolMissing":
+      return {
+        eyebrow: "Repair needed",
+        title: "Board's install tool needs to be put back in place.",
+        summary:
+          "The desktop app cannot check Board again until the managed bdb copy is available in settings.",
+        steps: [
+          "Open Settings so you can repair or re-download Board's install tool.",
+          "Let BE Home finish the repair in the managed tools folder.",
+          "Come back here and refresh the device check once repair is done.",
+        ],
+        tone: "warning",
+        primaryAction: "settings",
+        primaryActionLabel: "Open settings",
+        secondaryAction: "refresh",
+        secondaryActionLabel: "Refresh device check",
+      };
+    case "toolBroken":
+      return {
+        eyebrow: "Repair needed",
+        title: "Board's install tool needs a quick repair before device checks can continue.",
+        summary:
+          "BE Home found the stored bdb copy, but this computer is not letting it run cleanly enough to trust the result.",
+        steps: [
+          "Open Settings and choose the repair action for bdb.",
+          "Let the fresh copy finish downloading into the managed tools folder.",
+          "Return here and refresh the device check once repair is complete.",
+        ],
+        tone: "warning",
+        primaryAction: "settings",
+        primaryActionLabel: "Open settings",
+        secondaryAction: "refresh",
+        secondaryActionLabel: "Refresh device check",
+      };
+    case "unsupportedHost":
+      return {
+        eyebrow: "Unsupported system",
+        title: "This computer is outside Board's current supported desktop list.",
+        summary:
+          "BE Home will stay honest here instead of asking you to troubleshoot a setup Board does not currently publish bdb for.",
+        steps: [
+          setupGateState.toolState.guidance,
+          "If Board expands desktop support later, refresh the check from this panel.",
+          "For now, use a computer that matches Board's published support matrix for bdb.",
+        ],
+        tone: "neutral",
+        primaryAction: "refresh",
+        primaryActionLabel: "Refresh device check",
+      };
+    case "executionError":
+    default:
+      return {
+        eyebrow: "Try again",
+        title: "The last device check didn't finish cleanly.",
+        summary:
+          "This usually means the latest `bdb status` attempt could not settle into a clear connected or disconnected answer yet.",
+        steps: [
+          "Reconnect Board if the cable looks loose or the device has gone to sleep.",
+          "Close any other window or terminal that might still be using bdb.",
+          "Refresh the device check here once the connection path looks clear again.",
+        ],
+        tone: "warning",
+        primaryAction: "refresh",
+        primaryActionLabel: "Refresh device check",
+      };
   }
 }
 
