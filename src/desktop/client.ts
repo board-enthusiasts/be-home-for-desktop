@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   ApkCandidate,
   ApkDiscoverySnapshot,
+  InstallApkResult,
   ManagedApkLibraryImportResult,
   ManagedApkLibrarySnapshot,
   BdbAcquisitionResult,
@@ -54,6 +55,15 @@ export function importApkToManagedLibrary(
 ): Promise<ManagedApkLibraryImportResult> {
   return invoke<ManagedApkLibraryImportResult>("import_apk_to_managed_library", {
     input: { sourcePath },
+  });
+}
+
+/**
+ * Installs one APK onto the currently connected Board device.
+ */
+export function installApkToConnectedBoard(apkPath: string): Promise<InstallApkResult> {
+  return invoke<InstallApkResult>("install_apk_to_connected_board", {
+    input: { apkPath },
   });
 }
 

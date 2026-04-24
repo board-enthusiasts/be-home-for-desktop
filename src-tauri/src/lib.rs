@@ -1,3 +1,4 @@
+mod actions;
 mod apk;
 mod bdb;
 mod bdb_tool;
@@ -33,6 +34,13 @@ fn import_apk_to_managed_library(
     input: library::ManagedApkLibraryImportInput,
 ) -> Result<library::ManagedApkLibraryImportResult, String> {
     library::import_apk_to_managed_library(input)
+}
+
+#[tauri::command]
+fn install_apk_to_connected_board(
+    input: actions::InstallApkInput,
+) -> Result<actions::InstallApkResult, String> {
+    actions::install_apk_to_connected_board(input)
 }
 
 #[tauri::command]
@@ -96,6 +104,7 @@ pub fn run() {
             inspect_manual_apk_path,
             load_managed_apk_library_snapshot,
             import_apk_to_managed_library,
+            install_apk_to_connected_board,
             load_bdb_source_plan,
             load_bdb_tool_state,
             acquire_bdb_tool,
