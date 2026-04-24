@@ -5,6 +5,7 @@ import {
   acquireBdbTool,
   loadDesktopSettings,
   loadDeviceStatusSnapshot,
+  loadInstalledTitlesSnapshot,
   loadSetupGateState,
   saveDesktopSettings,
 } from "./desktop/client";
@@ -13,6 +14,7 @@ import type {
   DesktopSettings,
   DesktopSettingsInput,
   DeviceStatusSnapshot,
+  InstalledTitlesSnapshot,
   ManagedStorageLocation,
   SetupGateState,
 } from "./desktop/types";
@@ -137,6 +139,17 @@ function App() {
     errorMessage: null,
     errorDetail: null,
   });
+  const [installedTitlesState, setInstalledTitlesState] = useState<{
+    loading: boolean;
+    snapshot: InstalledTitlesSnapshot | null;
+    errorMessage: string | null;
+    errorDetail: string | null;
+  }>({
+    loading: false,
+    snapshot: null,
+    errorMessage: null,
+    errorDetail: null,
+  });
   const [windowFocused, setWindowFocused] = useState(true);
   const [documentVisible, setDocumentVisible] = useState(
     typeof document === "undefined" ? true : document.visibilityState !== "hidden",
@@ -207,6 +220,41 @@ function App() {
     },
   );
 
+  const refreshInstalledTitles = useEffectEvent(
+    async (source: "initial" | "manual" = "manual"): Promise<void> => {
+      if (setupGateState?.status !== "ready") {
+        return;
+      }
+
+      setInstalledTitlesState((previous) => ({
+        ...previous,
+        loading: true,
+        errorMessage: null,
+        errorDetail: null,
+      }));
+
+      try {
+        const snapshot = await loadInstalledTitlesSnapshot();
+        setInstalledTitlesState({
+          loading: false,
+          snapshot,
+          errorMessage: null,
+          errorDetail: null,
+        });
+      } catch {
+        setInstalledTitlesState((previous) => ({
+          loading: false,
+          snapshot: previous.snapshot,
+          errorMessage: "BE Home couldn't refresh the installed titles right now.",
+          errorDetail:
+            source === "initial"
+              ? "The first installed-title read did not finish cleanly. You can try again from the Installed on Board section."
+              : "Please try refreshing the installed titles again in a moment.",
+        }));
+      }
+    },
+  );
+
   useEffect(() => {
     const handleVisibilityChange = () => {
       setDocumentVisible(document.visibilityState !== "hidden");
@@ -262,6 +310,20 @@ function App() {
     setupGateState?.status,
     windowFocused,
   ]);
+
+  useEffect(() => {
+    if (setupGateState?.status !== "ready") {
+      setInstalledTitlesState({
+        loading: false,
+        snapshot: null,
+        errorMessage: null,
+        errorDetail: null,
+      });
+      return;
+    }
+
+    void refreshInstalledTitles("initial");
+  }, [setupGateState?.status]);
 
   async function refreshSetupGateState(options?: {
     showReviewDefaultsOnReady?: boolean;
@@ -660,6 +722,11 @@ function App() {
                   onOpenSettings={() => setActiveWorkspaceSection("settings")}
                   onRefresh={() => void refreshDeviceStatus("manual")}
                 />
+              ) : activeWorkspaceSection === "installed" ? (
+                <InstalledTitlesWorkspacePanel
+                  installedTitlesState={installedTitlesState}
+                  onRefresh={() => void refreshInstalledTitles("manual")}
+                />
               ) : (
                 <>
                   <article className="panel desktop-workspace-panel">
@@ -699,6 +766,128 @@ function App() {
         )}
       </section>
     </main>
+  );
+}
+
+interface InstalledTitlesWorkspacePanelProps {
+  installedTitlesState: {
+    loading: boolean;
+    snapshot: InstalledTitlesSnapshot | null;
+    errorMessage: string | null;
+    errorDetail: string | null;
+  };
+  onRefresh: () => void;
+}
+
+function InstalledTitlesWorkspacePanel({
+  installedTitlesState,
+  onRefresh,
+}: InstalledTitlesWorkspacePanelProps) {
+  const snapshot = installedTitlesState.snapshot;
+  const launchReadyCount =
+    snapshot?.titles.filter((title) => title.canLaunch).length ?? 0;
+
+  return (
+    <>
+      <article className="panel desktop-workspace-panel">
+        <div className="eyebrow">Installed on Board</div>
+        <h2>Keep the current Board inventory in one stable place.</h2>
+        <p className="panel-description">
+          This view keeps the titles Board is already reporting in one easy place, so you can
+          confirm what is on the device before you reach for another install.
+        </p>
+
+        {snapshot !== null ? (
+          <article
+            className={`desktop-status-band desktop-status-band--${installedTitlesStatusTone(snapshot.status)}`}
+          >
+            <span className="desktop-status-band-label">
+              {installedTitlesStatusLabel(snapshot.status)}
+            </span>
+            <h3>{snapshot.summary}</h3>
+            <p>{snapshot.guidance}</p>
+          </article>
+        ) : null}
+
+        {installedTitlesState.errorMessage !== null ? (
+          <article className="desktop-inline-message desktop-inline-message--warning">
+            <h3>{installedTitlesState.errorMessage}</h3>
+            {installedTitlesState.errorDetail !== null ? (
+              <p>{installedTitlesState.errorDetail}</p>
+            ) : null}
+          </article>
+        ) : null}
+
+        <dl className="desktop-detail-grid">
+          <DetailRow
+            label="Installed titles"
+            value={snapshot ? String(snapshot.titles.length) : "Loading..."}
+          />
+          <DetailRow
+            label="Launch-ready titles"
+            value={snapshot ? String(launchReadyCount) : "Loading..."}
+          />
+          <DetailRow
+            label="Inventory state"
+            value={snapshot ? installedTitlesStatusLabel(snapshot.status) : "Loading..."}
+          />
+        </dl>
+
+        <div className="desktop-action-row">
+          <button
+            className="secondary-button"
+            disabled={installedTitlesState.loading}
+            onClick={onRefresh}
+            type="button"
+          >
+            {installedTitlesState.loading ? "Refreshing..." : "Refresh installed titles"}
+          </button>
+        </div>
+      </article>
+
+      <article className="panel desktop-workspace-panel">
+        <div className="eyebrow">Current inventory</div>
+        <h2>See the titles Board is already reporting.</h2>
+        <p className="panel-description">
+          When Board shares package details, BE Home keeps them with each entry so the list stays
+          specific and dependable.
+        </p>
+
+        {snapshot === null ? (
+          <article className="desktop-inline-card">
+            <h3>Loading the installed-title inventory.</h3>
+            <p>BE Home is reading the current `bdb list` response from Board.</p>
+          </article>
+        ) : snapshot.status === "ready" ? (
+          <ul className="desktop-inventory-list">
+            {snapshot.titles.map((title) => (
+              <li className="desktop-inventory-item" key={title.stableId}>
+                <div className="desktop-inventory-copy">
+                  <h3>{title.displayName}</h3>
+                  <p>
+                    {title.subtitle ??
+                      "Package identity is not available yet for this installed title."}
+                  </p>
+                </div>
+                <div className="desktop-inventory-meta">
+                  <span className="desktop-inventory-pill">
+                    {title.canLaunch ? "Launch ready" : "Package needed"}
+                  </span>
+                  <span className="desktop-inventory-pill">
+                    {title.canUninstall ? "Uninstall ready" : "Read only"}
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <article className="desktop-inline-card">
+            <h3>{snapshot.summary}</h3>
+            <p>{snapshot.guidance}</p>
+          </article>
+        )}
+      </article>
+    </>
   );
 }
 
@@ -1416,6 +1605,33 @@ function deviceStatusTone(
     case "unsupportedHost":
     default:
       return "neutral";
+  }
+}
+
+function installedTitlesStatusLabel(value: InstalledTitlesSnapshot["status"]): string {
+  switch (value) {
+    case "ready":
+      return "Inventory ready";
+    case "empty":
+      return "Nothing installed yet";
+    case "unavailable":
+      return "Temporarily unavailable";
+    default:
+      return value;
+  }
+}
+
+function installedTitlesStatusTone(
+  value: InstalledTitlesSnapshot["status"],
+): "success" | "warning" | "neutral" {
+  switch (value) {
+    case "ready":
+      return "success";
+    case "empty":
+      return "neutral";
+    case "unavailable":
+    default:
+      return "warning";
   }
 }
 

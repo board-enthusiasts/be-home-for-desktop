@@ -1,6 +1,7 @@
 mod bdb;
 mod bdb_tool;
 mod device;
+mod installed_titles;
 mod setup;
 mod storage;
 
@@ -27,6 +28,12 @@ fn acquire_bdb_tool(repair: bool) -> Result<bdb_tool::BdbAcquisitionResult, Stri
 #[tauri::command]
 fn load_device_status_snapshot() -> Result<device::DeviceStatusSnapshot, String> {
     device::load_current_device_status_snapshot()
+}
+
+#[tauri::command]
+fn load_installed_titles_snapshot(
+) -> Result<installed_titles::InstalledTitlesSnapshot, String> {
+    installed_titles::load_current_installed_titles_snapshot()
 }
 
 #[tauri::command]
@@ -64,6 +71,7 @@ pub fn run() {
             load_bdb_tool_state,
             acquire_bdb_tool,
             load_device_status_snapshot,
+            load_installed_titles_snapshot,
             load_managed_storage_settings,
             load_desktop_settings,
             save_managed_storage_settings,
@@ -164,5 +172,17 @@ mod tests {
             .get("bdbVersion")
             .and_then(|value| value.get("status"))
             .is_some());
+    }
+
+    #[test]
+    fn installed_titles_snapshot_serializes_the_inventory_contract() {
+        let snapshot = super::load_installed_titles_snapshot()
+            .expect("installed titles snapshot should load");
+        let serialized =
+            serde_json::to_value(snapshot).expect("installed titles snapshot should serialize");
+
+        assert!(serialized.get("status").is_some());
+        assert!(serialized.get("guidance").is_some());
+        assert!(serialized.get("titles").is_some());
     }
 }

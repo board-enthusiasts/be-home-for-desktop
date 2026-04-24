@@ -7,6 +7,7 @@ import App from "./App";
 import type {
   DesktopSettings,
   DeviceStatusSnapshot,
+  InstalledTitlesSnapshot,
   SetupGateState,
 } from "./desktop/types";
 
@@ -171,6 +172,31 @@ const brokenToolDeviceStatusFixture: DeviceStatusSnapshot = {
   detail: "Choose repair in settings to fetch a fresh copy of bdb.",
 };
 
+const installedTitlesFixture: InstalledTitlesSnapshot = {
+  status: "ready",
+  summary: "Board reported 2 installed title(s).",
+  guidance:
+    "When Board shares package details, BE Home keeps them with each title so this list stays specific and easy to trust.",
+  titles: [
+    {
+      stableId: "package:co.board.luckydice",
+      displayName: "Lucky Dice",
+      packageName: "co.board.luckydice",
+      subtitle: "co.board.luckydice",
+      canLaunch: true,
+      canUninstall: true,
+    },
+    {
+      stableId: "package:fun.board.familymatch",
+      displayName: "Family Match",
+      packageName: "fun.board.familymatch",
+      subtitle: "fun.board.familymatch",
+      canLaunch: true,
+      canUninstall: true,
+    },
+  ],
+};
+
 const unsupportedSetupFixture: SetupGateState = {
   ...missingToolFixture,
   status: "unsupported",
@@ -243,6 +269,10 @@ describe("App", () => {
         return deviceStatusFixture;
       }
 
+      if (command === "load_installed_titles_snapshot") {
+        return installedTitlesFixture;
+      }
+
       throw new Error(`Unexpected command: ${command}`);
     });
 
@@ -268,6 +298,10 @@ describe("App", () => {
 
       if (command === "load_device_status_snapshot") {
         return deviceStatusFixture;
+      }
+
+      if (command === "load_installed_titles_snapshot") {
+        return installedTitlesFixture;
       }
 
       if (command === "acquire_bdb_tool") {
@@ -304,6 +338,10 @@ describe("App", () => {
 
       if (command === "load_device_status_snapshot") {
         return deviceStatusFixture;
+      }
+
+      if (command === "load_installed_titles_snapshot") {
+        return installedTitlesFixture;
       }
 
       if (command === "save_desktop_settings") {
@@ -417,6 +455,10 @@ describe("App", () => {
         };
       }
 
+      if (command === "load_installed_titles_snapshot") {
+        return installedTitlesFixture;
+      }
+
       throw new Error(`Unexpected command: ${command}`);
     });
 
@@ -480,6 +522,10 @@ describe("App", () => {
         return disconnectedDeviceStatusFixture;
       }
 
+      if (command === "load_installed_titles_snapshot") {
+        return installedTitlesFixture;
+      }
+
       throw new Error(`Unexpected command: ${command}`);
     });
 
@@ -504,6 +550,10 @@ describe("App", () => {
 
       if (command === "load_device_status_snapshot") {
         return brokenToolDeviceStatusFixture;
+      }
+
+      if (command === "load_installed_titles_snapshot") {
+        return installedTitlesFixture;
       }
 
       throw new Error(`Unexpected command: ${command}`);
@@ -576,6 +626,42 @@ describe("App", () => {
         "If Board expands desktop support later, you can come back and refresh this check again from here.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("shows installed titles from the normalized inventory model", async () => {
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "load_setup_gate_state") {
+        return runnableFixture;
+      }
+
+      if (command === "load_desktop_settings") {
+        return desktopSettingsFixture;
+      }
+
+      if (command === "load_device_status_snapshot") {
+        return deviceStatusFixture;
+      }
+
+      if (command === "load_installed_titles_snapshot") {
+        return installedTitlesFixture;
+      }
+
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Your desktop install space is ready")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Installed on Board/ }));
+
+    expect(
+      await screen.findByText(
+        "This view keeps the titles Board is already reporting in one easy place, so you can confirm what is on the device before you reach for another install.",
+      ),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("Lucky Dice")).toBeInTheDocument();
+    expect(screen.getByText("Family Match")).toBeInTheDocument();
+    expect(screen.getAllByText("Launch ready")).toHaveLength(2);
   });
 
   it("shows a friendly host failure message", async () => {

@@ -65,6 +65,33 @@ export interface DeviceStatusSnapshot {
 }
 
 /**
+ * Describes whether the installed-title inventory is ready, empty, or temporarily unavailable.
+ */
+export type InstalledTitlesStatus = "ready" | "empty" | "unavailable";
+
+/**
+ * Describes one title currently reported by `bdb list`.
+ */
+export interface InstalledTitle {
+  stableId: string;
+  displayName: string;
+  packageName: string | null;
+  subtitle: string | null;
+  canLaunch: boolean;
+  canUninstall: boolean;
+}
+
+/**
+ * Describes the current installed-title inventory model for Board.
+ */
+export interface InstalledTitlesSnapshot {
+  status: InstalledTitlesStatus;
+  summary: string;
+  guidance: string;
+  titles: InstalledTitle[];
+}
+
+/**
  * Describes whether the current machine matches a supported Board `bdb` target.
  */
 export type BdbSupportStatus = "supported" | "unsupported";
