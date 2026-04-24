@@ -1,6 +1,6 @@
 use crate::storage;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -9,7 +9,7 @@ use zip::ZipArchive;
 const BOARD_STRONG_MARKER: &str = "libnativeBoardSDK.so";
 
 /// Describes whether a candidate came from configured scan folders or a manual file pick.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum ApkCandidateSource {
     ScanFolder,
@@ -17,7 +17,7 @@ pub(crate) enum ApkCandidateSource {
 }
 
 /// Describes whether the current APK discovery result has content to show.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum ApkDiscoveryStatus {
     Ready,
@@ -157,17 +157,35 @@ fn build_apk_discovery_snapshot(scan_folder_paths: Vec<String>) -> ApkDiscoveryS
 
 fn walk_apk_files(root: &Path) -> Vec<PathBuf> {
     let mut directories = vec![root.to_path_buf()];
+    let mut visited_directories = HashSet::new();
     let mut apk_paths = Vec::new();
 
     while let Some(directory) = directories.pop() {
+        let canonical_directory =
+            fs::canonicalize(&directory).unwrap_or_else(|_| directory.clone());
+        if !visited_directories.insert(canonical_directory) {
+            continue;
+        }
+
         let Ok(entries) = fs::read_dir(&directory) else {
             continue;
         };
 
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+
+            if file_type.is_dir() {
                 directories.push(path);
+                continue;
+            }
+
+            if file_type.is_symlink() {
+                if path.is_file() && is_apk_path(&path) {
+                    apk_paths.push(path);
+                }
                 continue;
             }
 
@@ -274,13 +292,32 @@ fn extract_package_name(archive: &mut ZipArchive<File>) -> Option<String> {
     let mut bytes = Vec::new();
     manifest.read_to_end(&mut bytes).ok()?;
 
-    let mut candidates = extract_ascii_strings(&bytes);
-    candidates.extend(extract_utf16le_strings(&bytes));
-    candidates
+    let mut ascii_strings = extract_ascii_strings(&bytes);
+    if let Some(package_name) = extract_manifest_package_candidate(&ascii_strings) {
+        return Some(package_name);
+    }
+
+    let utf16_strings = extract_utf16le_strings(&bytes);
+    if let Some(package_name) = extract_manifest_package_candidate(&utf16_strings) {
+        return Some(package_name);
+    }
+
+    ascii_strings.extend(utf16_strings);
+    ascii_strings
         .into_iter()
         .filter(|candidate| looks_like_package_name(candidate))
         .filter(|candidate| !is_common_non_app_package(candidate))
         .max_by_key(package_name_score)
+}
+
+fn extract_manifest_package_candidate(strings: &[String]) -> Option<String> {
+    strings
+        .windows(2)
+        .find(|window| window[0].eq_ignore_ascii_case("package"))
+        .and_then(|window| window.get(1))
+        .filter(|candidate| looks_like_package_name(candidate))
+        .filter(|candidate| !is_common_non_app_package(candidate))
+        .cloned()
 }
 
 fn extract_ascii_strings(bytes: &[u8]) -> Vec<String> {
@@ -380,6 +417,10 @@ pub(crate) fn normalize_apk_path(value: &str) -> Result<PathBuf, String> {
         ));
     }
 
+    if !path.is_file() {
+        return Err("Choose an APK file, not a folder, so BE Home can inspect it.".into());
+    }
+
     if !is_apk_path(&path) {
         return Err("Choose an `.apk` file so BE Home can inspect it.".into());
     }
@@ -435,6 +476,8 @@ mod tests {
     use std::path::{Path, PathBuf};
     use zip::write::SimpleFileOptions;
     use zip::{CompressionMethod, ZipWriter};
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
 
     #[test]
     fn discovery_snapshot_walks_nested_scan_folders_and_deduplicates_results() {
@@ -477,6 +520,22 @@ mod tests {
         assert!(snapshot.candidates.is_empty());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn discovery_snapshot_skips_symlinked_directory_cycles() {
+        let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let downloads = temp_directory.path().join("Downloads");
+        let nested = downloads.join("nested");
+        fs::create_dir_all(&nested).expect("nested folder should exist");
+        write_apk(&nested.join("LuckyDice.apk"), true, "fun.board.luckydice");
+        symlink(&downloads, nested.join("loop")).expect("directory symlink should exist");
+
+        let snapshot = build_apk_discovery_snapshot(vec![downloads.to_string_lossy().into_owned()]);
+
+        assert_eq!(ApkDiscoveryStatus::Ready, snapshot.status);
+        assert_eq!(1, snapshot.candidates.len());
+    }
+
     #[test]
     fn manual_apk_inspection_requires_an_absolute_apk_path() {
         let result = inspect_manual_apk_path(ManualApkPathInput {
@@ -517,6 +576,39 @@ mod tests {
     }
 
     #[test]
+    fn manual_apk_inspection_prefers_the_manifest_package_over_class_names() {
+        let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let apk_path = temp_directory.path().join("LuckyDice.apk");
+        write_apk_with_manifest(
+            &apk_path,
+            true,
+            r#"<manifest package="fun.board.luckydice"><application><activity android:name="fun.board.luckydice.MainActivity" /></application></manifest>"#,
+        );
+
+        let candidate = inspect_manual_apk_path(ManualApkPathInput {
+            path: apk_path.to_string_lossy().into_owned(),
+        })
+        .expect("manual apk inspection should succeed");
+
+        assert_eq!(Some("fun.board.luckydice"), candidate.package_name.as_deref());
+    }
+
+    #[test]
+    fn manual_apk_inspection_rejects_directories_named_like_apks() {
+        let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let directory_path = temp_directory.path().join("LuckyDice.apk");
+        fs::create_dir_all(&directory_path).expect("directory should exist");
+
+        let result = inspect_manual_apk_path(ManualApkPathInput {
+            path: directory_path.to_string_lossy().into_owned(),
+        });
+
+        assert!(result
+            .expect_err("directory paths should be rejected")
+            .contains("not a folder"));
+    }
+
+    #[test]
     fn scan_candidates_preserve_the_scan_folder_they_were_found_from() {
         let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
         let scan_folder = temp_directory.path().join("Downloads");
@@ -538,6 +630,14 @@ mod tests {
     }
 
     fn write_apk(path: &Path, include_strong_marker: bool, package_name: &str) {
+        write_apk_with_manifest(
+            path,
+            include_strong_marker,
+            &format!(r#"<manifest package="{package_name}"></manifest>"#),
+        );
+    }
+
+    fn write_apk_with_manifest(path: &Path, include_strong_marker: bool, manifest: &str) {
         let file = File::create(path).expect("apk file should create");
         let mut writer = ZipWriter::new(file);
         let options = SimpleFileOptions::default()
@@ -547,7 +647,7 @@ mod tests {
             .start_file("AndroidManifest.xml", options)
             .expect("manifest should start");
         writer
-            .write_all(format!(r#"<manifest package="{package_name}"></manifest>"#).as_bytes())
+            .write_all(manifest.as_bytes())
             .expect("manifest should write");
 
         if include_strong_marker {
