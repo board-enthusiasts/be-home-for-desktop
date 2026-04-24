@@ -82,35 +82,35 @@ jobs:
           case "${RUNNER_OS}" in
             Windows)
               if [ "${WINDOWS_SIGNING_READY}" = "true" ]; then
-                cat <<'EOF' > "release-status/${{ matrix.platform_label }}-SIGNING-STATUS.txt"
-Windows signing credentials appear to be configured, but this Epic 1 workflow still treats live signing as a staged follow-up step.
-The produced NSIS artifact should be treated as an unsigned release placeholder until the signing command is wired in.
-EOF
+                printf '%s\n' \
+                  "Windows signing credentials appear to be configured, but this Epic 1 workflow still treats live signing as a staged follow-up step." \
+                  "The produced NSIS artifact should be treated as an unsigned release placeholder until the signing command is wired in." \
+                  > "release-status/${{ matrix.platform_label }}-SIGNING-STATUS.txt"
               else
-                cat <<'EOF' > "release-status/${{ matrix.platform_label }}-SIGNING-STATUS.txt"
-Windows signing credentials are not configured in this repository yet.
-The produced NSIS artifact is intentionally an unsigned placeholder so the release workflow can be exercised before the signing material exists.
-EOF
+                printf '%s\n' \
+                  "Windows signing credentials are not configured in this repository yet." \
+                  "The produced NSIS artifact is intentionally an unsigned placeholder so the release workflow can be exercised before the signing material exists." \
+                  > "release-status/${{ matrix.platform_label }}-SIGNING-STATUS.txt"
               fi
               ;;
             macOS)
               if [ "${MACOS_SIGNING_READY}" = "true" ]; then
-                cat <<'EOF' > "release-status/${{ matrix.platform_label }}-SIGNING-STATUS.txt"
-macOS signing credentials appear to be configured, but this Epic 1 workflow still treats live signing and notarization as staged follow-up steps.
-The produced DMG should be treated as an unsigned or non-notarized release placeholder until certificate import and notarization wiring are added.
-EOF
+                printf '%s\n' \
+                  "macOS signing credentials appear to be configured, but this Epic 1 workflow still treats live signing and notarization as staged follow-up steps." \
+                  "The produced DMG should be treated as an unsigned or non-notarized release placeholder until certificate import and notarization wiring are added." \
+                  > "release-status/${{ matrix.platform_label }}-SIGNING-STATUS.txt"
               else
-                cat <<'EOF' > "release-status/${{ matrix.platform_label }}-SIGNING-STATUS.txt"
-macOS signing and notarization credentials are not configured in this repository yet.
-The produced DMG is intentionally a placeholder artifact so the release workflow can be exercised before the signing material exists.
-EOF
+                printf '%s\n' \
+                  "macOS signing and notarization credentials are not configured in this repository yet." \
+                  "The produced DMG is intentionally a placeholder artifact so the release workflow can be exercised before the signing material exists." \
+                  > "release-status/${{ matrix.platform_label }}-SIGNING-STATUS.txt"
               fi
               ;;
             Linux)
-              cat <<'EOF' > "release-status/${{ matrix.platform_label }}-SIGNING-STATUS.txt"
-Linux release output currently uses the checksum-first policy documented in docs/release-signing.md.
-No detached Linux signing key is configured in Epic 1, so the published AppImage should be paired with the generated SHA256SUMS file.
-EOF
+              printf '%s\n' \
+                "Linux release output currently uses the checksum-first policy documented in docs/release-signing.md." \
+                "No detached Linux signing key is configured in Epic 1, so the published AppImage should be paired with the generated SHA256SUMS file." \
+                > "release-status/${{ matrix.platform_label }}-SIGNING-STATUS.txt"
               ;;
           esac
 
