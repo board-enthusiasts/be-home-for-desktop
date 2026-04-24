@@ -327,6 +327,64 @@
   line-height: 1.7;
 }
 
+.desktop-inventory-list {
+  display: grid;
+  gap: 0.9rem;
+  margin: 1.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.desktop-inventory-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+  border-radius: 1rem;
+  background: rgba(18, 17, 23, 0.55);
+  border: 1px solid rgba(118, 255, 170, 0.12);
+}
+
+.desktop-inventory-copy {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.desktop-inventory-copy h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.desktop-inventory-copy p {
+  margin: 0;
+  color: rgb(203 213 225 / 1);
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.desktop-inventory-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.55rem;
+}
+
+.desktop-inventory-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.45rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid rgba(118, 255, 170, 0.18);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(220, 247, 234, 0.78);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
 .desktop-inline-button {
   min-height: auto;
   padding-block: 0.65rem;
@@ -490,5 +548,14 @@
   .desktop-folder-item {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .desktop-inventory-item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .desktop-inventory-meta {
+    justify-content: flex-start;
   }
 }

@@ -6,6 +6,7 @@ import type {
   DesktopSettings,
   DesktopSettingsInput,
   DeviceStatusSnapshot,
+  InstalledTitlesSnapshot,
   ManagedStorageOverridesInput,
   ManagedStorageSettings,
   SetupGateState,
@@ -44,6 +45,13 @@ export function acquireBdbTool(repair = false): Promise<BdbAcquisitionResult> {
  */
 export function loadDeviceStatusSnapshot(): Promise<DeviceStatusSnapshot> {
   return invoke<DeviceStatusSnapshot>("load_device_status_snapshot");
+}
+
+/**
+ * Loads the current installed-title inventory from the desktop host.
+ */
+export function loadInstalledTitlesSnapshot(): Promise<InstalledTitlesSnapshot> {
+  return invoke<InstalledTitlesSnapshot>("load_installed_titles_snapshot");
 }
 
 /**
