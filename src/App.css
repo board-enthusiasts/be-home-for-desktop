@@ -287,6 +287,39 @@
   font-weight: 700;
 }
 
+.desktop-help-chip-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.desktop-help-tooltip {
+  position: absolute;
+  top: calc(100% + 0.55rem);
+  left: 50%;
+  z-index: 5;
+  width: min(18rem, 72vw);
+  padding: 0.7rem 0.8rem;
+  border-radius: var(--desktop-radius-md);
+  border: 1px solid var(--desktop-border-strong);
+  background: var(--desktop-surface);
+  color: var(--desktop-text);
+  box-shadow: var(--desktop-shadow-md);
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -0.25rem);
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+
+.desktop-help-chip-wrap:hover .desktop-help-tooltip,
+.desktop-help-chip-wrap:focus-within .desktop-help-tooltip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
 .desktop-icon-button:hover,
 .desktop-help-chip:hover,
 .primary-button:hover,

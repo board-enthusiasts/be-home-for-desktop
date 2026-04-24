@@ -20,6 +20,7 @@ import type {
   SetupGateState,
   SupportRequestDraft,
 } from "../desktop/types";
+import { formatBoardInstallToolVersion } from "../desktop/presentation";
 
 type WizardStepId = "welcome" | "boardTool" | "scanFolders" | "libraryLocation" | "ready";
 
@@ -145,9 +146,10 @@ export default function SetupWizardApp() {
       [
         {
           label: "Board Install Tool",
-          value:
-            toolState?.versionCheck.value ??
-            (toolState?.status === "runnable" ? "Installed" : "Still needs to be downloaded"),
+          value: formatBoardInstallToolVersion(
+            toolState?.versionCheck.value,
+            toolState?.status === "runnable" ? "Installed" : "Still needs to be downloaded",
+          ),
         },
         {
           label: "Games and apps folders",
@@ -495,6 +497,10 @@ export default function SetupWizardApp() {
                 <div className="eyebrow">Welcome</div>
                 <h2>Here’s what setup will help you do.</h2>
                 <p className="panel-description">
+                  BE Home for Desktop helps you choose games and apps on this computer and install
+                  them on your Board without working through terminal steps by hand.
+                </p>
+                <p className="panel-description">
                   This quick setup will download the Board Install Tool, choose where BE Home looks
                   for games and apps, and choose where saved copies should live on this computer.
                 </p>
@@ -523,13 +529,16 @@ export default function SetupWizardApp() {
                   <label className="desktop-field">
                     <span className="desktop-field-label">Current version</span>
                     <div className="desktop-readonly-field">
-                      {toolState.versionCheck.value ?? "Not installed yet"}
+                      {formatBoardInstallToolVersion(toolState.versionCheck.value, "Not installed yet")}
                     </div>
                   </label>
                   <label className="desktop-field">
                     <span className="desktop-field-label">Latest version in BE Home</span>
                     <div className="desktop-readonly-field">
-                      {toolState.updateStatus.availableVersion ?? "Not available yet"}
+                      {formatBoardInstallToolVersion(
+                        toolState.updateStatus.availableVersion,
+                        "Not available yet",
+                      )}
                     </div>
                   </label>
                 </div>

@@ -344,7 +344,11 @@ describe("App", () => {
     expect(await screen.findByText("Keep your Board installs close by.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Games & Apps/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Installed on Board/i })).toBeInTheDocument();
-    expect(screen.getByLabelText("What this Board status means")).toBeInTheDocument();
+    expect(screen.getByLabelText("What this Board status means")).toHaveAttribute(
+      "aria-describedby",
+      "board-status-help-tooltip",
+    );
+    expect(screen.getByText("BE Home is checking for your Board now.")).toBeInTheDocument();
   });
 
   it("routes the setup wizard window", async () => {
@@ -357,6 +361,9 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByText("Set up BE Home for Desktop")).toBeInTheDocument();
+    expect(
+      screen.getByText(/helps you choose games and apps on this computer/i),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Next" })).toBeInTheDocument();
   });
 
