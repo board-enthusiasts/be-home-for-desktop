@@ -5,6 +5,7 @@ use std::path::Path;
 use std::process::Command;
 
 const BDB_INSTALL_ARGUMENT: &str = "install";
+const BDB_REMOVE_ARGUMENT: &str = "remove";
 
 /// Describes whether an install attempt completed successfully.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -26,6 +27,34 @@ pub(crate) struct InstallApkInput {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct InstallApkResult {
     pub(crate) status: InstallApkStatus,
+    pub(crate) summary: String,
+    pub(crate) guidance: String,
+    pub(crate) detail: Option<String>,
+    pub(crate) command: String,
+    pub(crate) exit_code: Option<i32>,
+}
+
+/// Describes whether an uninstall attempt completed successfully.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum UninstallInstalledTitleStatus {
+    Removed,
+    Failed,
+}
+
+/// Represents the uninstall payload accepted by the desktop host.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UninstallInstalledTitleInput {
+    package_name: String,
+    display_name: Option<String>,
+}
+
+/// Describes the player-facing result of one `bdb remove` attempt.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UninstallInstalledTitleResult {
+    pub(crate) status: UninstallInstalledTitleStatus,
     pub(crate) summary: String,
     pub(crate) guidance: String,
     pub(crate) detail: Option<String>,
@@ -98,6 +127,27 @@ pub(crate) fn install_apk_to_connected_board(
     ))
 }
 
+/// Remove one installed title from the currently connected Board device.
+pub(crate) fn uninstall_installed_title_from_board(
+    input: UninstallInstalledTitleInput,
+) -> Result<UninstallInstalledTitleResult, String> {
+    let package_name = normalize_package_name(&input.package_name)?;
+    let display_name = normalize_display_name(
+        input.display_name.as_deref(),
+        &package_name,
+    );
+    let tool_state = bdb_tool::load_current_bdb_tool_state()?;
+    let device_status = device::load_current_device_status_snapshot()?;
+
+    Ok(uninstall_installed_title_with_runner(
+        &tool_state,
+        &device_status,
+        &package_name,
+        &display_name,
+        &CommandProcessRunner,
+    ))
+}
+
 fn install_apk_with_runner<P: ProcessRunner>(
     tool_state: &bdb_tool::BdbToolState,
     device_status: &device::DeviceStatusSnapshot,
@@ -110,7 +160,11 @@ fn install_apk_with_runner<P: ProcessRunner>(
         .and_then(|value| value.to_str())
         .unwrap_or("that APK")
         .to_owned();
-    let command = build_command_string(&tool_state.executable_path, &apk_path_string);
+    let command = build_command_string(
+        &tool_state.executable_path,
+        BDB_INSTALL_ARGUMENT,
+        &apk_path_string,
+    );
 
     if tool_state.status != bdb_tool::BdbToolStatus::Runnable {
         return blocked_install_result(
@@ -232,6 +286,119 @@ fn normalize_install_output(
     }
 }
 
+fn uninstall_installed_title_with_runner<P: ProcessRunner>(
+    tool_state: &bdb_tool::BdbToolState,
+    device_status: &device::DeviceStatusSnapshot,
+    package_name: &str,
+    display_name: &str,
+    runner: &P,
+) -> UninstallInstalledTitleResult {
+    let command = build_command_string(&tool_state.executable_path, BDB_REMOVE_ARGUMENT, package_name);
+
+    if tool_state.status != bdb_tool::BdbToolStatus::Runnable {
+        return blocked_uninstall_result(
+            display_name,
+            &command,
+            None,
+            tool_guidance_for_install(tool_state),
+        );
+    }
+
+    if device_status.status != device::DeviceStatusKind::BoardConnected {
+        return blocked_uninstall_result(
+            display_name,
+            &command,
+            None,
+            device_guidance_for_install(device_status),
+        );
+    }
+
+    match runner.run(
+        Path::new(&tool_state.executable_path),
+        &[BDB_REMOVE_ARGUMENT, package_name],
+    ) {
+        Ok(output) => normalize_uninstall_output(display_name, command, output),
+        Err(failure) => match failure.kind {
+            ProcessRunFailureKind::PermissionDenied => UninstallInstalledTitleResult {
+                status: UninstallInstalledTitleStatus::Failed,
+                summary: format!(
+                    "BE Home couldn't reopen Board's install tool to remove {display_name}."
+                ),
+                guidance: "Repair bdb from settings, then try removing the title again.".into(),
+                detail: Some(failure.detail),
+                command,
+                exit_code: None,
+            },
+            ProcessRunFailureKind::NotFound => UninstallInstalledTitleResult {
+                status: UninstallInstalledTitleStatus::Failed,
+                summary: format!(
+                    "Board's install tool went missing before {display_name} could be removed."
+                ),
+                guidance: "Repair or re-download bdb from settings, then try again.".into(),
+                detail: Some(failure.detail),
+                command,
+                exit_code: None,
+            },
+            ProcessRunFailureKind::Other => UninstallInstalledTitleResult {
+                status: UninstallInstalledTitleStatus::Failed,
+                summary: format!("BE Home couldn't finish removing {display_name} from Board yet."),
+                guidance:
+                    "Keep Board connected, then try removing the title again in a moment."
+                        .into(),
+                detail: Some("The uninstall command could not finish cleanly.".into()),
+                command,
+                exit_code: None,
+            },
+        },
+    }
+}
+
+fn normalize_uninstall_output(
+    display_name: &str,
+    command: String,
+    output: ProcessRunOutput,
+) -> UninstallInstalledTitleResult {
+    if output.exit_code == Some(0) {
+        return UninstallInstalledTitleResult {
+            status: UninstallInstalledTitleStatus::Removed,
+            summary: format!("BE Home removed {display_name} from Board."),
+            guidance:
+                "The device and installed-title views will refresh now so the inventory can catch up."
+                    .into(),
+            detail: first_non_empty_line(&combined_output_text(&output)),
+            command,
+            exit_code: output.exit_code,
+        };
+    }
+
+    let combined_output = combined_output_text(&output);
+    let normalized_output = combined_output.to_ascii_lowercase();
+    let (guidance, detail) = if contains_any(
+        &normalized_output,
+        &["not installed", "not found", "unknown package", "no such package"],
+    ) {
+        (
+            "Board says this title is not installed anymore. Refresh the installed list and try again if you still need to clean it up."
+                .into(),
+            Some("Board reported that the app was already missing.".into()),
+        )
+    } else {
+        (
+            "Keep Board connected, then try removing the title again.".into(),
+            first_non_empty_line(&combined_output),
+        )
+    };
+
+    UninstallInstalledTitleResult {
+        status: UninstallInstalledTitleStatus::Failed,
+        summary: format!("BE Home couldn't remove {display_name} from Board yet."),
+        guidance,
+        detail,
+        command,
+        exit_code: output.exit_code,
+    }
+}
+
 fn blocked_install_result(
     file_name: &str,
     command: &str,
@@ -241,6 +408,22 @@ fn blocked_install_result(
     InstallApkResult {
         status: InstallApkStatus::Failed,
         summary: format!("BE Home couldn't start installing {file_name} yet."),
+        guidance: guidance.1,
+        detail: guidance.2.or_else(|| Some(guidance.0.into())),
+        command: command.into(),
+        exit_code,
+    }
+}
+
+fn blocked_uninstall_result(
+    display_name: &str,
+    command: &str,
+    exit_code: Option<i32>,
+    guidance: (&'static str, String, Option<String>),
+) -> UninstallInstalledTitleResult {
+    UninstallInstalledTitleResult {
+        status: UninstallInstalledTitleStatus::Failed,
+        summary: format!("BE Home couldn't start removing {display_name} yet."),
         guidance: guidance.1,
         detail: guidance.2.or_else(|| Some(guidance.0.into())),
         command: command.into(),
@@ -332,8 +515,29 @@ fn contains_any(value: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| value.contains(needle))
 }
 
-fn build_command_string(executable_path: &str, apk_path: &str) -> String {
-    format!("{executable_path} {BDB_INSTALL_ARGUMENT} {apk_path}")
+fn build_command_string(executable_path: &str, command_name: &str, target: &str) -> String {
+    format!("{executable_path} {command_name} {target}")
+}
+
+fn normalize_package_name(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err("Choose an installed title with a package name before asking BE Home to remove it.".into());
+    }
+
+    Ok(trimmed.to_owned())
+}
+
+fn normalize_display_name(display_name: Option<&str>, fallback: &str) -> String {
+    let Some(display_name) = display_name else {
+        return fallback.to_owned();
+    };
+    let trimmed = display_name.trim();
+    if trimmed.is_empty() {
+        fallback.to_owned()
+    } else {
+        trimmed.to_owned()
+    }
 }
 
 fn path_to_string(path: &Path) -> String {
@@ -356,8 +560,9 @@ fn classify_process_failure(error: io::Error) -> ProcessRunFailure {
 #[cfg(test)]
 mod tests {
     use super::{
-        install_apk_with_runner, InstallApkStatus, ProcessRunFailure, ProcessRunFailureKind,
-        ProcessRunOutput, ProcessRunner,
+        install_apk_with_runner, uninstall_installed_title_with_runner, InstallApkStatus,
+        ProcessRunFailure, ProcessRunFailureKind, ProcessRunOutput, ProcessRunner,
+        UninstallInstalledTitleStatus,
     };
     use crate::{bdb, bdb_tool, device, storage};
     use std::path::Path;
@@ -471,6 +676,66 @@ mod tests {
 
         assert_eq!(InstallApkStatus::Failed, result.status);
         assert!(result.guidance.contains("Repair bdb"));
+    }
+
+    #[test]
+    fn uninstall_succeeds_when_bdb_returns_zero() {
+        let result = uninstall_installed_title_with_runner(
+            &sample_runnable_tool_state(),
+            &sample_device_status(device::DeviceStatusKind::BoardConnected),
+            "fun.board.luckydice",
+            "Lucky Dice",
+            &MockProcessRunner {
+                outcome: Ok(ProcessRunOutput {
+                    exit_code: Some(0),
+                    stdout: "Removed fun.board.luckydice".into(),
+                    stderr: String::new(),
+                }),
+            },
+        );
+
+        assert_eq!(UninstallInstalledTitleStatus::Removed, result.status);
+        assert!(result.summary.contains("Lucky Dice"));
+    }
+
+    #[test]
+    fn uninstall_maps_missing_package_output_to_guidance() {
+        let result = uninstall_installed_title_with_runner(
+            &sample_runnable_tool_state(),
+            &sample_device_status(device::DeviceStatusKind::BoardConnected),
+            "fun.board.luckydice",
+            "Lucky Dice",
+            &MockProcessRunner {
+                outcome: Ok(ProcessRunOutput {
+                    exit_code: Some(1),
+                    stdout: "Package not installed".into(),
+                    stderr: String::new(),
+                }),
+            },
+        );
+
+        assert_eq!(UninstallInstalledTitleStatus::Failed, result.status);
+        assert!(result.guidance.contains("not installed anymore"));
+    }
+
+    #[test]
+    fn uninstall_requires_a_connected_board() {
+        let result = uninstall_installed_title_with_runner(
+            &sample_runnable_tool_state(),
+            &sample_device_status(device::DeviceStatusKind::BoardDisconnected),
+            "fun.board.luckydice",
+            "Lucky Dice",
+            &MockProcessRunner {
+                outcome: Ok(ProcessRunOutput {
+                    exit_code: Some(0),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                }),
+            },
+        );
+
+        assert_eq!(UninstallInstalledTitleStatus::Failed, result.status);
+        assert!(result.guidance.contains("Connect Board"));
     }
 
     fn sample_apk_path() -> &'static Path {

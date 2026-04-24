@@ -124,6 +124,23 @@ export interface InstallApkResult {
 }
 
 /**
+ * Describes whether one uninstall attempt completed successfully.
+ */
+export type UninstallInstalledTitleStatus = "removed" | "failed";
+
+/**
+ * Describes the player-facing result of one `bdb remove` attempt.
+ */
+export interface UninstallInstalledTitleResult {
+  status: UninstallInstalledTitleStatus;
+  summary: string;
+  guidance: string;
+  detail: string | null;
+  command: string;
+  exitCode: number | null;
+}
+
+/**
  * Describes the normalized device-connection state for the current `bdb` session.
  */
 export type DeviceStatusKind =

@@ -15,6 +15,7 @@ import type {
   ManagedStorageOverridesInput,
   ManagedStorageSettings,
   SetupGateState,
+  UninstallInstalledTitleResult,
 } from "./types";
 
 /**
@@ -64,6 +65,18 @@ export function importApkToManagedLibrary(
 export function installApkToConnectedBoard(apkPath: string): Promise<InstallApkResult> {
   return invoke<InstallApkResult>("install_apk_to_connected_board", {
     input: { apkPath },
+  });
+}
+
+/**
+ * Removes one installed title from the currently connected Board device.
+ */
+export function uninstallInstalledTitleFromBoard(
+  packageName: string,
+  displayName?: string,
+): Promise<UninstallInstalledTitleResult> {
+  return invoke<UninstallInstalledTitleResult>("uninstall_installed_title_from_board", {
+    input: { packageName, displayName },
   });
 }
 
