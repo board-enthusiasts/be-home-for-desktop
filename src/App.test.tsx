@@ -310,6 +310,27 @@ describe("App", () => {
     expect(screen.getAllByRole("button", { name: "Cancel" }).length).toBeGreaterThan(0);
   });
 
+  it("allows ready setup-wizard close requests to proceed without interception", async () => {
+    currentWindowState.label = "setup-wizard";
+    installDefaultInvokeHandlers(runnableFixture);
+
+    render(<App />);
+
+    await screen.findByRole("button", { name: "Open workspace" });
+
+    const closeRequestHandler =
+      onCloseRequestedMock.mock.calls[onCloseRequestedMock.mock.calls.length - 1]?.[0];
+    const closeEvent = {
+      preventDefault: vi.fn(),
+    };
+
+    invokeMock.mockClear();
+    await closeRequestHandler?.(closeEvent);
+
+    expect(closeEvent.preventDefault).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalledWith("dismiss_setup_wizard_window");
+  });
+
   it("routes the settings window", async () => {
     currentWindowState.label = "settings";
 
@@ -343,6 +364,21 @@ describe("App", () => {
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("open_setup_wizard_window");
+    });
+  });
+
+  it("refreshes the main workspace before opening it from ready setup", async () => {
+    currentWindowState.label = "setup-wizard";
+    installDefaultInvokeHandlers(runnableFixture);
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open workspace" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("emit_settings_updated");
+      expect(invokeMock).toHaveBeenCalledWith("show_main_workspace_window");
+      expect(invokeMock).toHaveBeenCalledWith("dismiss_setup_wizard_window");
     });
   });
 

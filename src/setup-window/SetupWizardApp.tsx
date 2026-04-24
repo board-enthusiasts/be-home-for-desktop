@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import {
   acquireBdbTool,
   dismissSetupWizardWindow,
+  emitSettingsUpdated,
   loadSetupGateState,
   showMainWorkspaceWindow,
 } from "../desktop/client";
@@ -90,6 +91,10 @@ export default function SetupWizardApp() {
     let unlistenCloseRequest: (() => void) | null = null;
     void getCurrentWindow()
       .onCloseRequested(async (event) => {
+        if (setupGateState?.status === "ready") {
+          return;
+        }
+
         event.preventDefault();
         await handleCancelSetup();
       })
@@ -167,6 +172,7 @@ export default function SetupWizardApp() {
   }
 
   async function handleOpenWorkspace(): Promise<void> {
+    await emitSettingsUpdated();
     await showMainWorkspaceWindow();
     await dismissSetupWizardWindow();
   }
