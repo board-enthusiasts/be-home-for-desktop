@@ -178,7 +178,7 @@ const installedTitlesFixture: InstalledTitlesSnapshot = {
   status: "ready",
   summary: "Board reported 2 installed title(s).",
   guidance:
-    "This list is ready for the later uninstall and launch actions that stay tied to package identity.",
+    "When Board shares package details, BE Home keeps them with each title so this list stays specific and easy to trust.",
   titles: [
     {
       stableId: "package:co.board.luckydice",
@@ -718,6 +718,11 @@ describe("App", () => {
     expect(await screen.findByText("Your desktop install space is ready")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Installed on Board/ }));
 
+    expect(
+      await screen.findByText(
+        "This view keeps the titles Board is already reporting in one easy place, so you can confirm what is on the device before you reach for another install.",
+      ),
+    ).toBeInTheDocument();
     expect(await screen.findByText("Lucky Dice")).toBeInTheDocument();
     expect(screen.getByText("Family Match")).toBeInTheDocument();
     expect(screen.getAllByText("Launch ready")).toHaveLength(2);
