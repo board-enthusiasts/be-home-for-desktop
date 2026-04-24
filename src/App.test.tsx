@@ -10,6 +10,8 @@ import type {
   DesktopSettings,
   DeviceStatusSnapshot,
   InstalledTitlesSnapshot,
+  ManagedApkLibraryImportResult,
+  ManagedApkLibrarySnapshot,
   SetupGateState,
 } from "./desktop/types";
 
@@ -178,7 +180,7 @@ const installedTitlesFixture: InstalledTitlesSnapshot = {
   status: "ready",
   summary: "Board reported 2 installed title(s).",
   guidance:
-    "When Board shares package details, BE Home keeps them with each title so this list stays specific and easy to trust.",
+    "This list is ready for the later uninstall and launch actions that stay tied to package identity.",
   titles: [
     {
       stableId: "package:co.board.luckydice",
@@ -241,6 +243,45 @@ const manualApkCandidateFixture: ApkCandidate = {
   confidence: "possibleMatch",
   confidenceSummary:
     "BE Home found some Android packaging signals, but not the strongest Board marker yet.",
+};
+
+const emptyManagedLibraryFixture: ManagedApkLibrarySnapshot = {
+  status: "empty",
+  summary: "The managed APK library is still empty.",
+  guidance:
+    "Keep a copy from a scanned APK or a manual pick when you want later reinstalls to stay close by.",
+  items: [],
+};
+
+const managedLibraryFixture: ManagedApkLibrarySnapshot = {
+  status: "ready",
+  summary: "BE Home is keeping 1 APK file(s) in the managed library.",
+  guidance:
+    "These managed copies stay available for later installs even if the original downloads move somewhere else.",
+  items: [
+    {
+      stableId: "library:c:\\users\\matt\\downloads\\luckydice.apk",
+      fileName: "LuckyDice.apk",
+      originalSourcePath: "C:\\Users\\Matt\\Downloads\\LuckyDice.apk",
+      managedPath:
+        "C:\\Users\\Matt\\AppData\\Local\\Board Enthusiasts\\BE Home for Desktop\\apk-library\\LuckyDice.apk",
+      packageName: "fun.board.luckydice",
+      confidence: "strongMatch",
+      confidenceSummary: "BE Home found a strong Board SDK marker in this APK.",
+      fileSizeBytes: 2048000,
+      importedAtUnixMs: 1_713_957_600_000,
+      sourceModifiedAtUnixMs: 1_713_957_000_000,
+      managedModifiedAtUnixMs: 1_713_957_600_000,
+    },
+  ],
+};
+
+const managedLibraryImportResultFixture: ManagedApkLibraryImportResult = {
+  summary: "BE Home copied LuckyDice.apk into the managed APK library.",
+  guidance:
+    "Your original APK stayed where it was, and this managed copy is ready for later reinstall steps.",
+  item: managedLibraryFixture.items[0],
+  snapshot: managedLibraryFixture,
 };
 
 const unsupportedSetupFixture: SetupGateState = {
@@ -323,6 +364,10 @@ describe("App", () => {
         return apkDiscoveryFixture;
       }
 
+      if (command === "load_managed_apk_library_snapshot") {
+        return emptyManagedLibraryFixture;
+      }
+
       throw new Error(`Unexpected command: ${command}`);
     });
 
@@ -356,6 +401,10 @@ describe("App", () => {
 
       if (command === "load_apk_discovery_snapshot") {
         return apkDiscoveryFixture;
+      }
+
+      if (command === "load_managed_apk_library_snapshot") {
+        return emptyManagedLibraryFixture;
       }
 
       if (command === "acquire_bdb_tool") {
@@ -400,6 +449,10 @@ describe("App", () => {
 
       if (command === "load_apk_discovery_snapshot") {
         return apkDiscoveryFixture;
+      }
+
+      if (command === "load_managed_apk_library_snapshot") {
+        return emptyManagedLibraryFixture;
       }
 
       if (command === "save_desktop_settings") {
@@ -459,6 +512,23 @@ describe("App", () => {
       if (command === "load_desktop_settings") {
         return desktopSettingsFixture;
       }
+
+      if (command === "load_device_status_snapshot") {
+        return deviceStatusFixture;
+      }
+
+      if (command === "load_installed_titles_snapshot") {
+        return installedTitlesFixture;
+      }
+
+      if (command === "load_apk_discovery_snapshot") {
+        return apkDiscoveryFixture;
+      }
+
+      if (command === "load_managed_apk_library_snapshot") {
+        return emptyManagedLibraryFixture;
+      }
+
       if (command === "acquire_bdb_tool") {
         return repairPromise;
       }
@@ -521,6 +591,10 @@ describe("App", () => {
         return apkDiscoveryFixture;
       }
 
+      if (command === "load_managed_apk_library_snapshot") {
+        return emptyManagedLibraryFixture;
+      }
+
       throw new Error(`Unexpected command: ${command}`);
     });
 
@@ -559,6 +633,18 @@ describe("App", () => {
         };
       }
 
+      if (command === "load_installed_titles_snapshot") {
+        return installedTitlesFixture;
+      }
+
+      if (command === "load_apk_discovery_snapshot") {
+        return apkDiscoveryFixture;
+      }
+
+      if (command === "load_managed_apk_library_snapshot") {
+        return emptyManagedLibraryFixture;
+      }
+
       throw new Error(`Unexpected command: ${command}`);
     });
 
@@ -590,6 +676,10 @@ describe("App", () => {
 
       if (command === "load_apk_discovery_snapshot") {
         return apkDiscoveryFixture;
+      }
+
+      if (command === "load_managed_apk_library_snapshot") {
+        return emptyManagedLibraryFixture;
       }
 
       throw new Error(`Unexpected command: ${command}`);
@@ -626,6 +716,10 @@ describe("App", () => {
         return apkDiscoveryFixture;
       }
 
+      if (command === "load_managed_apk_library_snapshot") {
+        return emptyManagedLibraryFixture;
+      }
+
       throw new Error(`Unexpected command: ${command}`);
     });
 
@@ -660,6 +754,18 @@ describe("App", () => {
         }
 
         return deviceStatusFixture;
+      }
+
+      if (command === "load_installed_titles_snapshot") {
+        return installedTitlesFixture;
+      }
+
+      if (command === "load_apk_discovery_snapshot") {
+        return apkDiscoveryFixture;
+      }
+
+      if (command === "load_managed_apk_library_snapshot") {
+        return emptyManagedLibraryFixture;
       }
 
       throw new Error(`Unexpected command: ${command}`);
@@ -720,6 +826,10 @@ describe("App", () => {
         return apkDiscoveryFixture;
       }
 
+      if (command === "load_managed_apk_library_snapshot") {
+        return emptyManagedLibraryFixture;
+      }
+
       throw new Error(`Unexpected command: ${command}`);
     });
 
@@ -728,11 +838,6 @@ describe("App", () => {
     expect(await screen.findByText("Your desktop install space is ready")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Installed on Board/ }));
 
-    expect(
-      await screen.findByText(
-        "This view keeps the titles Board is already reporting in one easy place, so you can confirm what is on the device before you reach for another install.",
-      ),
-    ).toBeInTheDocument();
     expect(await screen.findByText("Lucky Dice")).toBeInTheDocument();
     expect(screen.getByText("Family Match")).toBeInTheDocument();
     expect(screen.getAllByText("Launch ready")).toHaveLength(2);
@@ -761,6 +866,10 @@ describe("App", () => {
         return apkDiscoveryFixture;
       }
 
+      if (command === "load_managed_apk_library_snapshot") {
+        return emptyManagedLibraryFixture;
+      }
+
       if (command === "inspect_manual_apk_path") {
         return manualApkCandidateFixture;
       }
@@ -784,6 +893,57 @@ describe("App", () => {
     expect(
       screen.getByText(
         "BE Home found some Android packaging signals, but not the strongest Board marker yet.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("copies a discovered APK into the managed library inventory", async () => {
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "load_setup_gate_state") {
+        return runnableFixture;
+      }
+
+      if (command === "load_desktop_settings") {
+        return desktopSettingsFixture;
+      }
+
+      if (command === "load_device_status_snapshot") {
+        return deviceStatusFixture;
+      }
+
+      if (command === "load_installed_titles_snapshot") {
+        return installedTitlesFixture;
+      }
+
+      if (command === "load_apk_discovery_snapshot") {
+        return apkDiscoveryFixture;
+      }
+
+      if (command === "load_managed_apk_library_snapshot") {
+        return emptyManagedLibraryFixture;
+      }
+
+      if (command === "import_apk_to_managed_library") {
+        return managedLibraryImportResultFixture;
+      }
+
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Your desktop install space is ready")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /APK Library/ }));
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Keep a copy" })[0]);
+
+    expect(
+      await screen.findByText("BE Home copied LuckyDice.apk into the managed APK library."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("fun.board.luckydice")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Managed copy: C:\\Users\\Matt\\AppData\\Local\\Board Enthusiasts\\BE Home for Desktop\\apk-library\\LuckyDice\.apk/,
       ),
     ).toBeInTheDocument();
   });

@@ -65,6 +65,48 @@ export interface ApkDiscoverySnapshot {
 }
 
 /**
+ * Describes whether the managed APK library currently has imported items to show.
+ */
+export type ManagedApkLibraryStatus = "ready" | "empty";
+
+/**
+ * Describes one APK retained inside the managed library.
+ */
+export interface LibraryItem {
+  stableId: string;
+  fileName: string;
+  originalSourcePath: string;
+  managedPath: string;
+  packageName: string | null;
+  confidence: ApkConfidence;
+  confidenceSummary: string;
+  fileSizeBytes: number;
+  importedAtUnixMs: number;
+  sourceModifiedAtUnixMs: number | null;
+  managedModifiedAtUnixMs: number | null;
+}
+
+/**
+ * Describes the current managed APK library inventory.
+ */
+export interface ManagedApkLibrarySnapshot {
+  status: ManagedApkLibraryStatus;
+  summary: string;
+  guidance: string;
+  items: LibraryItem[];
+}
+
+/**
+ * Describes the outcome of importing one APK into the managed library.
+ */
+export interface ManagedApkLibraryImportResult {
+  summary: string;
+  guidance: string;
+  item: LibraryItem;
+  snapshot: ManagedApkLibrarySnapshot;
+}
+
+/**
  * Describes the normalized device-connection state for the current `bdb` session.
  */
 export type DeviceStatusKind =

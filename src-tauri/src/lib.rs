@@ -3,6 +3,7 @@ mod bdb;
 mod bdb_tool;
 mod device;
 mod installed_titles;
+mod library;
 mod setup;
 mod storage;
 
@@ -19,6 +20,19 @@ fn load_apk_discovery_snapshot() -> Result<apk::ApkDiscoverySnapshot, String> {
 #[tauri::command]
 fn inspect_manual_apk_path(input: apk::ManualApkPathInput) -> Result<apk::ApkCandidate, String> {
     apk::inspect_manual_apk_path(input)
+}
+
+#[tauri::command]
+fn load_managed_apk_library_snapshot(
+) -> Result<library::ManagedApkLibrarySnapshot, String> {
+    library::load_current_managed_apk_library_snapshot()
+}
+
+#[tauri::command]
+fn import_apk_to_managed_library(
+    input: library::ManagedApkLibraryImportInput,
+) -> Result<library::ManagedApkLibraryImportResult, String> {
+    library::import_apk_to_managed_library(input)
 }
 
 #[tauri::command]
@@ -80,6 +94,8 @@ pub fn run() {
             load_setup_gate_state,
             load_apk_discovery_snapshot,
             inspect_manual_apk_path,
+            load_managed_apk_library_snapshot,
+            import_apk_to_managed_library,
             load_bdb_source_plan,
             load_bdb_tool_state,
             acquire_bdb_tool,
@@ -120,6 +136,18 @@ mod tests {
         assert!(serialized.get("status").is_some());
         assert!(serialized.get("guidance").is_some());
         assert!(serialized.get("candidates").is_some());
+    }
+
+    #[test]
+    fn managed_apk_library_snapshot_serializes_the_library_contract() {
+        let snapshot = super::load_managed_apk_library_snapshot()
+            .expect("managed APK library snapshot should load successfully");
+        let serialized =
+            serde_json::to_value(snapshot).expect("managed APK library snapshot should serialize");
+
+        assert!(serialized.get("status").is_some());
+        assert!(serialized.get("guidance").is_some());
+        assert!(serialized.get("items").is_some());
     }
 
     #[test]

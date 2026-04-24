@@ -9,7 +9,7 @@ use zip::ZipArchive;
 const BOARD_STRONG_MARKER: &str = "libnativeBoardSDK.so";
 
 /// Describes whether a candidate came from configured scan folders or a manual file pick.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum ApkCandidateSource {
     ScanFolder,
@@ -17,7 +17,7 @@ pub(crate) enum ApkCandidateSource {
 }
 
 /// Describes whether the current APK discovery result has content to show.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum ApkDiscoveryStatus {
     Ready,
@@ -25,7 +25,7 @@ pub(crate) enum ApkDiscoveryStatus {
 }
 
 /// Describes the Board-confidence level detected for one APK candidate.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum ApkConfidence {
     StrongMatch,
@@ -87,6 +87,11 @@ pub(crate) fn load_current_apk_discovery_snapshot() -> Result<ApkDiscoverySnapsh
 pub(crate) fn inspect_manual_apk_path(input: ManualApkPathInput) -> Result<ApkCandidate, String> {
     let path = normalize_apk_path(&input.path)?;
     build_apk_candidate(&path, ApkCandidateSource::ManualSelection, None)
+}
+
+/// Inspect an APK file directly so other host modules can reuse the shared heuristic model.
+pub(crate) fn inspect_apk_file(path: &Path) -> Result<ApkCandidate, String> {
+    build_apk_candidate(path, ApkCandidateSource::ManualSelection, None)
 }
 
 fn build_apk_discovery_snapshot(scan_folder_paths: Vec<String>) -> ApkDiscoverySnapshot {
@@ -394,7 +399,7 @@ fn confidence_summary(confidence: ApkConfidence) -> &'static str {
     }
 }
 
-fn normalize_apk_path(value: &str) -> Result<PathBuf, String> {
+pub(crate) fn normalize_apk_path(value: &str) -> Result<PathBuf, String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err("Choose an APK file before asking BE Home to inspect it.".into());

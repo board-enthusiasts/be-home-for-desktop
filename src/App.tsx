@@ -3,11 +3,13 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useEffectEvent, useMemo, useState } from "react";
 import {
   acquireBdbTool,
+  importApkToManagedLibrary,
   inspectManualApkPath,
   loadApkDiscoverySnapshot,
   loadDesktopSettings,
   loadDeviceStatusSnapshot,
   loadInstalledTitlesSnapshot,
+  loadManagedApkLibrarySnapshot,
   loadSetupGateState,
   saveDesktopSettings,
 } from "./desktop/client";
@@ -19,6 +21,8 @@ import type {
   DesktopSettingsInput,
   DeviceStatusSnapshot,
   InstalledTitlesSnapshot,
+  ManagedApkLibraryImportResult,
+  ManagedApkLibrarySnapshot,
   ManagedStorageLocation,
   SetupGateState,
 } from "./desktop/types";
@@ -167,6 +171,23 @@ function App() {
     errorMessage: null,
     errorDetail: null,
   });
+  const [managedLibraryState, setManagedLibraryState] = useState<{
+    loading: boolean;
+    snapshot: ManagedApkLibrarySnapshot | null;
+    errorMessage: string | null;
+    errorDetail: string | null;
+    actionPath: string | null;
+    actionMessage: string | null;
+    actionDetail: string | null;
+  }>({
+    loading: false,
+    snapshot: null,
+    errorMessage: null,
+    errorDetail: null,
+    actionPath: null,
+    actionMessage: null,
+    actionDetail: null,
+  });
   const [windowFocused, setWindowFocused] = useState(true);
   const [documentVisible, setDocumentVisible] = useState(
     typeof document === "undefined" ? true : document.visibilityState !== "hidden",
@@ -308,6 +329,42 @@ function App() {
     },
   );
 
+  const refreshManagedLibrary = useEffectEvent(
+    async (source: "initial" | "manual" = "manual"): Promise<void> => {
+      if (setupGateState?.status !== "ready") {
+        return;
+      }
+
+      setManagedLibraryState((previous) => ({
+        ...previous,
+        loading: true,
+        errorMessage: null,
+        errorDetail: null,
+      }));
+
+      try {
+        const snapshot = await loadManagedApkLibrarySnapshot();
+        setManagedLibraryState((previous) => ({
+          ...previous,
+          loading: false,
+          snapshot,
+          errorMessage: null,
+          errorDetail: null,
+        }));
+      } catch {
+        setManagedLibraryState((previous) => ({
+          ...previous,
+          loading: false,
+          errorMessage: "BE Home couldn't refresh the managed APK library right now.",
+          errorDetail:
+            source === "initial"
+              ? "The first library read did not finish cleanly. You can try again from the APK Library section."
+              : "Please try refreshing the managed library again in a moment.",
+        }));
+      }
+    },
+  );
+
   useEffect(() => {
     const handleVisibilityChange = () => {
       setDocumentVisible(document.visibilityState !== "hidden");
@@ -393,6 +450,23 @@ function App() {
     void refreshApkDiscovery("initial");
   }, [setupGateState?.status]);
 
+  useEffect(() => {
+    if (setupGateState?.status !== "ready") {
+      setManagedLibraryState({
+        loading: false,
+        snapshot: null,
+        errorMessage: null,
+        errorDetail: null,
+        actionPath: null,
+        actionMessage: null,
+        actionDetail: null,
+      });
+      return;
+    }
+
+    void refreshManagedLibrary("initial");
+  }, [setupGateState?.status]);
+
   async function refreshSetupGateState(options?: {
     showReviewDefaultsOnReady?: boolean;
   }): Promise<void> {
@@ -455,12 +529,11 @@ function App() {
         detail: result.guidance,
         lastOutcome: result.outcome,
       });
-      const shouldShowReviewDefaults =
-        options?.showReviewDefaultsOnReady === true &&
-        result.toolState.status === "runnable" &&
-        (result.outcome === "downloaded" || result.outcome === "repaired");
       await refreshSetupGateState({
-        showReviewDefaultsOnReady: shouldShowReviewDefaults,
+        showReviewDefaultsOnReady:
+          options?.showReviewDefaultsOnReady ??
+          (result.toolState.status === "runnable" &&
+            (result.outcome === "downloaded" || result.outcome === "repaired")),
       });
       return result;
     } catch {
@@ -622,6 +695,41 @@ function App() {
     });
   }
 
+  async function handleImportApkIntoManagedLibrary(
+    sourcePath: string,
+  ): Promise<ManagedApkLibraryImportResult | null> {
+    setManagedLibraryState((previous) => ({
+      ...previous,
+      actionPath: sourcePath,
+      actionMessage: null,
+      actionDetail: null,
+      errorMessage: null,
+      errorDetail: null,
+    }));
+
+    try {
+      const result = await importApkToManagedLibrary(sourcePath);
+      setManagedLibraryState((previous) => ({
+        ...previous,
+        snapshot: result.snapshot,
+        actionPath: null,
+        actionMessage: result.summary,
+        actionDetail: result.guidance,
+        errorMessage: null,
+        errorDetail: null,
+      }));
+      return result;
+    } catch {
+      setManagedLibraryState((previous) => ({
+        ...previous,
+        actionPath: null,
+        errorMessage: "BE Home couldn't add that APK to the managed library just yet.",
+        errorDetail: "Please try the same file again in a moment.",
+      }));
+      return null;
+    }
+  }
+
   async function handleChooseManualApk(): Promise<void> {
     const selectedPath = await pickSinglePath(
       await open({
@@ -657,6 +765,10 @@ function App() {
         errorMessage: null,
         errorDetail: null,
       }));
+
+      if (manualCandidate.confidence === "strongMatch") {
+        await handleImportApkIntoManagedLibrary(selectedPath);
+      }
     } catch {
       setApkDiscoveryState((previous) => ({
         ...previous,
@@ -768,16 +880,8 @@ function App() {
                   setupGateState={setupGateState}
                   toolActionState={toolActionState}
                   onBack={() => setSetupViewStep("systemCheck")}
-                  onDownload={() =>
-                    void handleAcquireBdbTool(false, {
-                      showReviewDefaultsOnReady: true,
-                    })
-                  }
-                  onRepair={() =>
-                    void handleAcquireBdbTool(true, {
-                      showReviewDefaultsOnReady: true,
-                    })
-                  }
+                  onDownload={() => void handleAcquireBdbTool(false)}
+                  onRepair={() => void handleAcquireBdbTool(true)}
                   onRefresh={() => void refreshSetupGateState()}
                 />
               ) : null}
@@ -844,8 +948,13 @@ function App() {
                 <ApkLibraryWorkspacePanel
                   apkDiscoveryState={apkDiscoveryState}
                   desktopSettings={desktopSettings}
+                  managedLibraryState={managedLibraryState}
                   onChooseManualApk={() => void handleChooseManualApk()}
+                  onImportCandidate={(sourcePath) =>
+                    void handleImportApkIntoManagedLibrary(sourcePath)
+                  }
                   onRefresh={() => void refreshApkDiscovery("manual")}
+                  onRefreshManagedLibrary={() => void refreshManagedLibrary("manual")}
                 />
               ) : (
                 <>
@@ -898,18 +1007,42 @@ interface ApkLibraryWorkspacePanelProps {
     errorDetail: string | null;
   };
   desktopSettings: DesktopSettings | null;
+  managedLibraryState: {
+    loading: boolean;
+    snapshot: ManagedApkLibrarySnapshot | null;
+    errorMessage: string | null;
+    errorDetail: string | null;
+    actionPath: string | null;
+    actionMessage: string | null;
+    actionDetail: string | null;
+  };
   onChooseManualApk: () => void;
+  onImportCandidate: (sourcePath: string) => void;
   onRefresh: () => void;
+  onRefreshManagedLibrary: () => void;
 }
 
 function ApkLibraryWorkspacePanel({
   apkDiscoveryState,
   desktopSettings,
+  managedLibraryState,
   onChooseManualApk,
+  onImportCandidate,
   onRefresh,
+  onRefreshManagedLibrary,
 }: ApkLibraryWorkspacePanelProps) {
-  const snapshot = apkDiscoveryState.snapshot;
+  const discoverySnapshot = apkDiscoveryState.snapshot;
+  const librarySnapshot = managedLibraryState.snapshot;
   const scanFolderCount = desktopSettings?.scanFolders.length ?? 0;
+  const importedSourcePathKeys = new Set(
+    managedLibraryState.snapshot?.items.flatMap((item) => [
+      pathIdentityKey(item.originalSourcePath),
+      pathIdentityKey(item.managedPath),
+    ]) ?? [],
+  );
+  const manualCandidateImported =
+    apkDiscoveryState.manualCandidate !== null &&
+    importedSourcePathKeys.has(pathIdentityKey(apkDiscoveryState.manualCandidate.sourcePath));
 
   return (
     <>
@@ -922,15 +1055,15 @@ function ApkLibraryWorkspacePanel({
           to build from.
         </p>
 
-        {snapshot !== null ? (
+        {discoverySnapshot !== null ? (
           <article
-            className={`desktop-status-band desktop-status-band--${apkDiscoveryStatusTone(snapshot.status)}`}
+            className={`desktop-status-band desktop-status-band--${apkDiscoveryStatusTone(discoverySnapshot.status)}`}
           >
             <span className="desktop-status-band-label">
-              {apkDiscoveryStatusLabel(snapshot.status)}
+              {apkDiscoveryStatusLabel(discoverySnapshot.status)}
             </span>
-            <h3>{snapshot.summary}</h3>
-            <p>{snapshot.guidance}</p>
+            <h3>{discoverySnapshot.summary}</h3>
+            <p>{discoverySnapshot.guidance}</p>
           </article>
         ) : null}
 
@@ -950,7 +1083,7 @@ function ApkLibraryWorkspacePanel({
           />
           <DetailRow
             label="Scanned APKs"
-            value={snapshot ? String(snapshot.candidates.length) : "Loading..."}
+            value={discoverySnapshot ? String(discoverySnapshot.candidates.length) : "Loading..."}
           />
           <DetailRow
             label="Manual pick"
@@ -1004,34 +1137,171 @@ function ApkLibraryWorkspacePanel({
             {apkDiscoveryState.manualCandidate.packageName !== null ? (
               <p>{apkDiscoveryState.manualCandidate.packageName}</p>
             ) : null}
+            <div className="desktop-action-row">
+              <button
+                className="secondary-button"
+                disabled={
+                  managedLibraryState.actionPath === apkDiscoveryState.manualCandidate.sourcePath ||
+                  manualCandidateImported
+                }
+                onClick={() => onImportCandidate(apkDiscoveryState.manualCandidate!.sourcePath)}
+                type="button"
+              >
+                {managedLibraryState.actionPath === apkDiscoveryState.manualCandidate.sourcePath
+                  ? "Copying..."
+                  : manualCandidateImported
+                    ? "Already in library"
+                    : "Keep a copy"}
+              </button>
+            </div>
           </article>
         ) : null}
 
-        {snapshot === null ? (
+        {discoverySnapshot === null ? (
           <article className="desktop-inline-card">
             <h3>Scanning the current APK folders.</h3>
             <p>BE Home is walking the configured folders for `.apk` files now.</p>
           </article>
-        ) : snapshot.candidates.length === 0 ? (
+        ) : discoverySnapshot.candidates.length === 0 ? (
           <article className="desktop-inline-card">
-            <h3>{snapshot.summary}</h3>
-            <p>{snapshot.guidance}</p>
+            <h3>{discoverySnapshot.summary}</h3>
+            <p>{discoverySnapshot.guidance}</p>
           </article>
         ) : (
           <ul className="desktop-inventory-list">
-            {snapshot.candidates.map((candidate) => (
+            {discoverySnapshot.candidates.map((candidate) => (
               <li className="desktop-inventory-item" key={candidate.stableId}>
                 <div className="desktop-inventory-copy">
                   <h3>{candidate.fileName}</h3>
                   <p>{candidate.sourcePath}</p>
                 </div>
-                <div className="desktop-inventory-meta">
-                  <span className="desktop-inventory-pill">
-                    {apkConfidenceLabel(candidate.confidence)}
-                  </span>
-                  <span className="desktop-inventory-pill">
-                    {formatFileSize(candidate.fileSizeBytes)}
-                  </span>
+                <div className="desktop-inventory-side">
+                  <div className="desktop-inventory-meta">
+                    <span className="desktop-inventory-pill">
+                      {apkConfidenceLabel(candidate.confidence)}
+                    </span>
+                    <span className="desktop-inventory-pill">
+                      {formatFileSize(candidate.fileSizeBytes)}
+                    </span>
+                  </div>
+                  <button
+                    className="secondary-button desktop-inline-button"
+                    disabled={
+                      managedLibraryState.actionPath === candidate.sourcePath ||
+                      importedSourcePathKeys.has(pathIdentityKey(candidate.sourcePath))
+                    }
+                    onClick={() => onImportCandidate(candidate.sourcePath)}
+                    type="button"
+                  >
+                    {managedLibraryState.actionPath === candidate.sourcePath
+                      ? "Copying..."
+                      : importedSourcePathKeys.has(pathIdentityKey(candidate.sourcePath))
+                        ? "Already in library"
+                        : "Keep a copy"}
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </article>
+
+      <article className="panel desktop-workspace-panel">
+        <div className="eyebrow">Managed library</div>
+        <h2>Keep reusable APK copies in one steady inventory.</h2>
+        <p className="panel-description">
+          BE Home stores imported APKs as managed copies, keeps the original source path nearby in
+          the inventory, and leaves your original downloads where they were.
+        </p>
+
+        {librarySnapshot !== null ? (
+          <article
+            className={`desktop-status-band desktop-status-band--${managedLibraryStatusTone(librarySnapshot.status)}`}
+          >
+            <span className="desktop-status-band-label">
+              {managedLibraryStatusLabel(librarySnapshot.status)}
+            </span>
+            <h3>{librarySnapshot.summary}</h3>
+            <p>{librarySnapshot.guidance}</p>
+          </article>
+        ) : null}
+
+        {managedLibraryState.actionMessage !== null ? (
+          <article className="desktop-inline-message">
+            <h3>{managedLibraryState.actionMessage}</h3>
+            {managedLibraryState.actionDetail !== null ? (
+              <p>{managedLibraryState.actionDetail}</p>
+            ) : null}
+          </article>
+        ) : null}
+
+        {managedLibraryState.errorMessage !== null ? (
+          <article className="desktop-inline-message desktop-inline-message--warning">
+            <h3>{managedLibraryState.errorMessage}</h3>
+            {managedLibraryState.errorDetail !== null ? (
+              <p>{managedLibraryState.errorDetail}</p>
+            ) : null}
+          </article>
+        ) : null}
+
+        <dl className="desktop-detail-grid">
+          <DetailRow
+            label="Managed items"
+            value={librarySnapshot ? String(librarySnapshot.items.length) : "Loading..."}
+          />
+          <DetailRow
+            label="Current library folder"
+            value={desktopSettings?.apkLibrary.effectivePath ?? "Loading..."}
+          />
+          <DetailRow
+            label="Copy behavior"
+            value="Original downloads stay in place"
+          />
+        </dl>
+
+        <div className="desktop-action-row">
+          <button
+            className="secondary-button"
+            disabled={managedLibraryState.loading}
+            onClick={onRefreshManagedLibrary}
+            type="button"
+          >
+            {managedLibraryState.loading ? "Refreshing..." : "Refresh managed library"}
+          </button>
+        </div>
+
+        {librarySnapshot === null ? (
+          <article className="desktop-inline-card">
+            <h3>Loading the managed library inventory.</h3>
+            <p>BE Home is reading the current managed APK manifest and retained copies.</p>
+          </article>
+        ) : librarySnapshot.items.length === 0 ? (
+          <article className="desktop-inline-card">
+            <h3>{librarySnapshot.summary}</h3>
+            <p>{librarySnapshot.guidance}</p>
+          </article>
+        ) : (
+          <ul className="desktop-inventory-list">
+            {librarySnapshot.items.map((item) => (
+              <li className="desktop-inventory-item" key={item.stableId}>
+                <div className="desktop-inventory-copy">
+                  <h3>{item.fileName}</h3>
+                  <p>{item.packageName ?? "Package name not available yet"}</p>
+                  <p>Original: {item.originalSourcePath}</p>
+                  <p>Managed copy: {item.managedPath}</p>
+                </div>
+                <div className="desktop-inventory-side">
+                  <div className="desktop-inventory-meta">
+                    <span className="desktop-inventory-pill">
+                      {apkConfidenceLabel(item.confidence)}
+                    </span>
+                    <span className="desktop-inventory-pill">
+                      {formatFileSize(item.fileSizeBytes)}
+                    </span>
+                  </div>
+                  <p className="desktop-library-timestamp">
+                    Imported {formatTimestamp(item.importedAtUnixMs)}
+                  </p>
                 </div>
               </li>
             ))}
@@ -1066,8 +1336,8 @@ function InstalledTitlesWorkspacePanel({
         <div className="eyebrow">Installed on Board</div>
         <h2>Keep the current Board inventory in one stable place.</h2>
         <p className="panel-description">
-          This view keeps the titles Board is already reporting in one easy place, so you can
-          confirm what is on the device before you reach for another install.
+          This view turns `bdb list` into a title model the later uninstall and launch work can
+          reuse, without asking the renderer to parse command output on its own.
         </p>
 
         {snapshot !== null ? (
@@ -1122,8 +1392,8 @@ function InstalledTitlesWorkspacePanel({
         <div className="eyebrow">Current inventory</div>
         <h2>See the titles Board is already reporting.</h2>
         <p className="panel-description">
-          When Board shares package details, BE Home keeps them with each entry so the list stays
-          specific and dependable.
+          Package identity stays with each entry when BE Home can read it, so later launch and
+          uninstall actions have a stable place to start.
         </p>
 
         {snapshot === null ? (
@@ -1256,12 +1526,7 @@ function DeviceWorkspacePanel({
             <StatusSummaryCard
               title="Current bdb version check"
               summary={snapshot.bdbVersion.summary}
-              guidance={
-                snapshot.bdbVersion.detail ??
-                (snapshot.bdbVersion.status === "available"
-                  ? "BE Home confirmed the managed bdb version during the latest device check."
-                  : "Try refreshing the device check again after repairing bdb if the version is still unavailable.")
-              }
+              guidance={snapshot.bdbVersion.detail ?? snapshot.guidance}
             />
           </>
         )}
@@ -1270,21 +1535,27 @@ function DeviceWorkspacePanel({
       {guidanceContent === null ? (
         <article className="panel desktop-workspace-panel">
           <div className="eyebrow">Recovery help</div>
-          <h2>We’ll load the right next steps after the first device check.</h2>
+          <h2>
+            {deviceStatusState.errorMessage !== null
+              ? "Try the device check again."
+              : "We’ll load the right next steps after the first device check."}
+          </h2>
           <p className="panel-description">
-            Once BE Home has the current Board status, this area will turn it into simple recovery
-            guidance instead of terminal-style troubleshooting.
+            {deviceStatusState.errorDetail ??
+              "Once BE Home has the current Board status, this area will turn it into simple recovery guidance instead of terminal-style troubleshooting."}
           </p>
-          <div className="desktop-action-row">
-            <button
-              className="secondary-button"
-              disabled={deviceStatusState.loading}
-              onClick={onRefresh}
-              type="button"
-            >
-              {deviceStatusState.loading ? "Refreshing..." : "Refresh device check"}
-            </button>
-          </div>
+          {deviceStatusState.errorMessage !== null ? (
+            <div className="desktop-action-row">
+              <button
+                className="primary-button"
+                disabled={deviceStatusState.loading}
+                onClick={onRefresh}
+                type="button"
+              >
+                {deviceStatusState.loading ? "Refreshing..." : "Refresh device check"}
+              </button>
+            </div>
+          ) : null}
         </article>
       ) : (
         <article
@@ -1931,6 +2202,29 @@ function apkDiscoveryStatusTone(
   }
 }
 
+function managedLibraryStatusLabel(value: ManagedApkLibrarySnapshot["status"]): string {
+  switch (value) {
+    case "ready":
+      return "Library ready";
+    case "empty":
+      return "Nothing copied yet";
+    default:
+      return value;
+  }
+}
+
+function managedLibraryStatusTone(
+  value: ManagedApkLibrarySnapshot["status"],
+): "success" | "warning" | "neutral" {
+  switch (value) {
+    case "ready":
+      return "success";
+    case "empty":
+    default:
+      return "neutral";
+  }
+}
+
 function apkConfidenceLabel(value: ApkCandidate["confidence"]): string {
   switch (value) {
     case "strongMatch":
@@ -1941,6 +2235,18 @@ function apkConfidenceLabel(value: ApkCandidate["confidence"]): string {
     default:
       return "Board match unknown";
   }
+}
+
+function formatTimestamp(value: number): string {
+  if (value <= 0) {
+    return "just now";
+  }
+
+  return new Date(value).toISOString().slice(0, 16).replace("T", " ");
+}
+
+function pathIdentityKey(path: string): string {
+  return path.toLowerCase();
 }
 
 function buildDeviceGuidanceContent(

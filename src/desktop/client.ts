@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   ApkCandidate,
   ApkDiscoverySnapshot,
+  ManagedApkLibraryImportResult,
+  ManagedApkLibrarySnapshot,
   BdbAcquisitionResult,
   BdbSourcePlan,
   BdbToolState,
@@ -34,6 +36,24 @@ export function loadApkDiscoverySnapshot(): Promise<ApkDiscoverySnapshot> {
 export function inspectManualApkPath(path: string): Promise<ApkCandidate> {
   return invoke<ApkCandidate>("inspect_manual_apk_path", {
     input: { path },
+  });
+}
+
+/**
+ * Loads the current managed APK library inventory from the Rust host.
+ */
+export function loadManagedApkLibrarySnapshot(): Promise<ManagedApkLibrarySnapshot> {
+  return invoke<ManagedApkLibrarySnapshot>("load_managed_apk_library_snapshot");
+}
+
+/**
+ * Copies one APK into the managed library and returns the updated inventory snapshot.
+ */
+export function importApkToManagedLibrary(
+  sourcePath: string,
+): Promise<ManagedApkLibraryImportResult> {
+  return invoke<ManagedApkLibraryImportResult>("import_apk_to_managed_library", {
+    input: { sourcePath },
   });
 }
 
