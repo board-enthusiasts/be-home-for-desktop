@@ -25,6 +25,38 @@ export interface SetupGateState {
 }
 
 /**
+ * Describes whether a candidate came from configured scan folders or a manual file pick.
+ */
+export type ApkCandidateSource = "scanFolder" | "manualSelection";
+
+/**
+ * Describes whether the current APK discovery result has content to show.
+ */
+export type ApkDiscoveryStatus = "ready" | "empty";
+
+/**
+ * Describes one locally discovered APK candidate.
+ */
+export interface ApkCandidate {
+  stableId: string;
+  fileName: string;
+  sourcePath: string;
+  discoverySource: ApkCandidateSource;
+  discoveredFromPath: string | null;
+  fileSizeBytes: number;
+}
+
+/**
+ * Describes the current APK discovery snapshot built from configured scan folders.
+ */
+export interface ApkDiscoverySnapshot {
+  status: ApkDiscoveryStatus;
+  summary: string;
+  guidance: string;
+  candidates: ApkCandidate[];
+}
+
+/**
  * Describes the normalized device-connection state for the current `bdb` session.
  */
 export type DeviceStatusKind =

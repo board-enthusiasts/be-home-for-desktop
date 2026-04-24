@@ -5,6 +5,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import type {
+  ApkCandidate,
+  ApkDiscoverySnapshot,
   DesktopSettings,
   DeviceStatusSnapshot,
   InstalledTitlesSnapshot,
@@ -197,6 +199,40 @@ const installedTitlesFixture: InstalledTitlesSnapshot = {
   ],
 };
 
+const apkDiscoveryFixture: ApkDiscoverySnapshot = {
+  status: "ready",
+  summary: "BE Home found 2 APK file(s) across the current scan folders.",
+  guidance:
+    "Use rescan after you add new downloads to a watched folder, or choose a file manually when you already know where it lives.",
+  candidates: [
+    {
+      stableId: "apk:c:\\users\\matt\\downloads\\luckydice.apk",
+      fileName: "LuckyDice.apk",
+      sourcePath: "C:\\Users\\Matt\\Downloads\\LuckyDice.apk",
+      discoverySource: "scanFolder",
+      discoveredFromPath: "C:\\Users\\Matt\\Downloads",
+      fileSizeBytes: 2048000,
+    },
+    {
+      stableId: "apk:c:\\users\\matt\\games\\familymatch.apk",
+      fileName: "FamilyMatch.apk",
+      sourcePath: "C:\\Users\\Matt\\Games\\FamilyMatch.apk",
+      discoverySource: "scanFolder",
+      discoveredFromPath: "C:\\Users\\Matt\\Games",
+      fileSizeBytes: 1024000,
+    },
+  ],
+};
+
+const manualApkCandidateFixture: ApkCandidate = {
+  stableId: "apk:c:\\users\\matt\\downloads\\manualchoice.apk",
+  fileName: "ManualChoice.apk",
+  sourcePath: "C:\\Users\\Matt\\Downloads\\ManualChoice.apk",
+  discoverySource: "manualSelection",
+  discoveredFromPath: null,
+  fileSizeBytes: 3072000,
+};
+
 const unsupportedSetupFixture: SetupGateState = {
   ...missingToolFixture,
   status: "unsupported",
@@ -273,6 +309,10 @@ describe("App", () => {
         return installedTitlesFixture;
       }
 
+      if (command === "load_apk_discovery_snapshot") {
+        return apkDiscoveryFixture;
+      }
+
       throw new Error(`Unexpected command: ${command}`);
     });
 
@@ -302,6 +342,10 @@ describe("App", () => {
 
       if (command === "load_installed_titles_snapshot") {
         return installedTitlesFixture;
+      }
+
+      if (command === "load_apk_discovery_snapshot") {
+        return apkDiscoveryFixture;
       }
 
       if (command === "acquire_bdb_tool") {
@@ -342,6 +386,10 @@ describe("App", () => {
 
       if (command === "load_installed_titles_snapshot") {
         return installedTitlesFixture;
+      }
+
+      if (command === "load_apk_discovery_snapshot") {
+        return apkDiscoveryFixture;
       }
 
       if (command === "save_desktop_settings") {
@@ -459,6 +507,10 @@ describe("App", () => {
         return installedTitlesFixture;
       }
 
+      if (command === "load_apk_discovery_snapshot") {
+        return apkDiscoveryFixture;
+      }
+
       throw new Error(`Unexpected command: ${command}`);
     });
 
@@ -526,6 +578,10 @@ describe("App", () => {
         return installedTitlesFixture;
       }
 
+      if (command === "load_apk_discovery_snapshot") {
+        return apkDiscoveryFixture;
+      }
+
       throw new Error(`Unexpected command: ${command}`);
     });
 
@@ -554,6 +610,10 @@ describe("App", () => {
 
       if (command === "load_installed_titles_snapshot") {
         return installedTitlesFixture;
+      }
+
+      if (command === "load_apk_discovery_snapshot") {
+        return apkDiscoveryFixture;
       }
 
       throw new Error(`Unexpected command: ${command}`);
@@ -646,6 +706,10 @@ describe("App", () => {
         return installedTitlesFixture;
       }
 
+      if (command === "load_apk_discovery_snapshot") {
+        return apkDiscoveryFixture;
+      }
+
       throw new Error(`Unexpected command: ${command}`);
     });
 
@@ -662,6 +726,50 @@ describe("App", () => {
     expect(await screen.findByText("Lucky Dice")).toBeInTheDocument();
     expect(screen.getByText("Family Match")).toBeInTheDocument();
     expect(screen.getAllByText("Launch ready")).toHaveLength(2);
+  });
+
+  it("shows scanned APK candidates and lets players choose a manual APK", async () => {
+    openMock.mockResolvedValue("C:\\Users\\Matt\\Downloads\\ManualChoice.apk");
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "load_setup_gate_state") {
+        return runnableFixture;
+      }
+
+      if (command === "load_desktop_settings") {
+        return desktopSettingsFixture;
+      }
+
+      if (command === "load_device_status_snapshot") {
+        return deviceStatusFixture;
+      }
+
+      if (command === "load_installed_titles_snapshot") {
+        return installedTitlesFixture;
+      }
+
+      if (command === "load_apk_discovery_snapshot") {
+        return apkDiscoveryFixture;
+      }
+
+      if (command === "inspect_manual_apk_path") {
+        return manualApkCandidateFixture;
+      }
+
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Your desktop install space is ready")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /APK Library/ }));
+
+    expect(await screen.findByText("LuckyDice.apk")).toBeInTheDocument();
+    expect(screen.getByText("FamilyMatch.apk")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose APK" }));
+
+    expect(await screen.findByText("Latest manual APK pick")).toBeInTheDocument();
+    expect(screen.getAllByText("ManualChoice.apk").length).toBeGreaterThanOrEqual(1);
   });
 
   it("shows a friendly host failure message", async () => {
