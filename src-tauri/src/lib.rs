@@ -51,6 +51,13 @@ fn uninstall_installed_title_from_board(
 }
 
 #[tauri::command]
+fn launch_installed_title_on_board(
+    input: actions::LaunchInstalledTitleInput,
+) -> Result<actions::LaunchInstalledTitleResult, String> {
+    actions::launch_installed_title_on_board(input)
+}
+
+#[tauri::command]
 fn load_bdb_source_plan() -> bdb::BdbSourcePlan {
     bdb::resolve_current_bdb_source_plan()
 }
@@ -113,6 +120,7 @@ pub fn run() {
             import_apk_to_managed_library,
             install_apk_to_connected_board,
             uninstall_installed_title_from_board,
+            launch_installed_title_on_board,
             load_bdb_source_plan,
             load_bdb_tool_state,
             acquire_bdb_tool,

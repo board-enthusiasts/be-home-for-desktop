@@ -3,6 +3,7 @@ import type {
   ApkCandidate,
   ApkDiscoverySnapshot,
   InstallApkResult,
+  LaunchInstalledTitleResult,
   ManagedApkLibraryImportResult,
   ManagedApkLibrarySnapshot,
   BdbAcquisitionResult,
@@ -76,6 +77,18 @@ export function uninstallInstalledTitleFromBoard(
   displayName?: string,
 ): Promise<UninstallInstalledTitleResult> {
   return invoke<UninstallInstalledTitleResult>("uninstall_installed_title_from_board", {
+    input: { packageName, displayName },
+  });
+}
+
+/**
+ * Launches one installed title on the currently connected Board device.
+ */
+export function launchInstalledTitleOnBoard(
+  packageName: string,
+  displayName?: string,
+): Promise<LaunchInstalledTitleResult> {
+  return invoke<LaunchInstalledTitleResult>("launch_installed_title_on_board", {
     input: { packageName, displayName },
   });
 }

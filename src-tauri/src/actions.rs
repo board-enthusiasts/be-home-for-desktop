@@ -5,6 +5,7 @@ use std::path::Path;
 use std::process::Command;
 
 const BDB_INSTALL_ARGUMENT: &str = "install";
+const BDB_LAUNCH_ARGUMENT: &str = "launch";
 const BDB_REMOVE_ARGUMENT: &str = "remove";
 
 /// Describes whether an install attempt completed successfully.
@@ -55,6 +56,34 @@ pub(crate) struct UninstallInstalledTitleInput {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UninstallInstalledTitleResult {
     pub(crate) status: UninstallInstalledTitleStatus,
+    pub(crate) summary: String,
+    pub(crate) guidance: String,
+    pub(crate) detail: Option<String>,
+    pub(crate) command: String,
+    pub(crate) exit_code: Option<i32>,
+}
+
+/// Describes whether a launch attempt completed successfully.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum LaunchInstalledTitleStatus {
+    Launched,
+    Failed,
+}
+
+/// Represents the launch payload accepted by the desktop host.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LaunchInstalledTitleInput {
+    package_name: String,
+    display_name: Option<String>,
+}
+
+/// Describes the player-facing result of one `bdb launch` attempt.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LaunchInstalledTitleResult {
+    pub(crate) status: LaunchInstalledTitleStatus,
     pub(crate) summary: String,
     pub(crate) guidance: String,
     pub(crate) detail: Option<String>,
@@ -140,6 +169,24 @@ pub(crate) fn uninstall_installed_title_from_board(
     let device_status = device::load_current_device_status_snapshot()?;
 
     Ok(uninstall_installed_title_with_runner(
+        &tool_state,
+        &device_status,
+        &package_name,
+        &display_name,
+        &CommandProcessRunner,
+    ))
+}
+
+/// Launch one installed title on the currently connected Board device.
+pub(crate) fn launch_installed_title_on_board(
+    input: LaunchInstalledTitleInput,
+) -> Result<LaunchInstalledTitleResult, String> {
+    let package_name = normalize_package_name(&input.package_name)?;
+    let display_name = normalize_display_name(input.display_name.as_deref(), &package_name);
+    let tool_state = bdb_tool::load_current_bdb_tool_state()?;
+    let device_status = device::load_current_device_status_snapshot()?;
+
+    Ok(launch_installed_title_with_runner(
         &tool_state,
         &device_status,
         &package_name,
@@ -375,7 +422,12 @@ fn normalize_uninstall_output(
     let normalized_output = combined_output.to_ascii_lowercase();
     let (guidance, detail) = if contains_any(
         &normalized_output,
-        &["not installed", "unknown package", "no such package", "package not found"],
+        &[
+            "not installed",
+            "unknown package",
+            "no such package",
+            "package not found",
+        ],
     ) {
         (
             "Board says this title is not installed anymore. Refresh the installed list and try again if you still need to clean it up."
@@ -392,6 +444,123 @@ fn normalize_uninstall_output(
     UninstallInstalledTitleResult {
         status: UninstallInstalledTitleStatus::Failed,
         summary: format!("BE Home couldn't remove {display_name} from Board yet."),
+        guidance,
+        detail,
+        command,
+        exit_code: output.exit_code,
+    }
+}
+
+fn launch_installed_title_with_runner<P: ProcessRunner>(
+    tool_state: &bdb_tool::BdbToolState,
+    device_status: &device::DeviceStatusSnapshot,
+    package_name: &str,
+    display_name: &str,
+    runner: &P,
+) -> LaunchInstalledTitleResult {
+    let command = build_command_string(&tool_state.executable_path, BDB_LAUNCH_ARGUMENT, package_name);
+
+    if tool_state.status != bdb_tool::BdbToolStatus::Runnable {
+        return blocked_launch_result(
+            display_name,
+            &command,
+            None,
+            tool_guidance_for_launch(tool_state),
+        );
+    }
+
+    if device_status.status != device::DeviceStatusKind::BoardConnected {
+        return blocked_launch_result(
+            display_name,
+            &command,
+            None,
+            device_guidance_for_launch(device_status),
+        );
+    }
+
+    match runner.run(
+        Path::new(&tool_state.executable_path),
+        &[BDB_LAUNCH_ARGUMENT, package_name],
+    ) {
+        Ok(output) => normalize_launch_output(display_name, command, output),
+        Err(failure) => match failure.kind {
+            ProcessRunFailureKind::PermissionDenied => LaunchInstalledTitleResult {
+                status: LaunchInstalledTitleStatus::Failed,
+                summary: format!(
+                    "BE Home couldn't reopen Board's install tool to launch {display_name}."
+                ),
+                guidance: "Repair bdb from settings, then try launching the title again.".into(),
+                detail: Some(failure.detail),
+                command,
+                exit_code: None,
+            },
+            ProcessRunFailureKind::NotFound => LaunchInstalledTitleResult {
+                status: LaunchInstalledTitleStatus::Failed,
+                summary: format!(
+                    "Board's install tool went missing before {display_name} could launch."
+                ),
+                guidance: "Repair or re-download bdb from settings, then try again.".into(),
+                detail: Some(failure.detail),
+                command,
+                exit_code: None,
+            },
+            ProcessRunFailureKind::Other => LaunchInstalledTitleResult {
+                status: LaunchInstalledTitleStatus::Failed,
+                summary: format!("BE Home couldn't finish launching {display_name} on Board yet."),
+                guidance:
+                    "Keep Board connected, then try opening the title again in a moment.".into(),
+                detail: Some("The launch command could not finish cleanly.".into()),
+                command,
+                exit_code: None,
+            },
+        },
+    }
+}
+
+fn normalize_launch_output(
+    display_name: &str,
+    command: String,
+    output: ProcessRunOutput,
+) -> LaunchInstalledTitleResult {
+    if output.exit_code == Some(0) {
+        return LaunchInstalledTitleResult {
+            status: LaunchInstalledTitleStatus::Launched,
+            summary: format!("BE Home launched {display_name} on Board."),
+            guidance:
+                "The device check will refresh now while the installed-title list stays in place."
+                    .into(),
+            detail: first_non_empty_line(&combined_output_text(&output)),
+            command,
+            exit_code: output.exit_code,
+        };
+    }
+
+    let combined_output = combined_output_text(&output);
+    let normalized_output = combined_output.to_ascii_lowercase();
+    let (guidance, detail) = if contains_any(
+        &normalized_output,
+        &[
+            "not installed",
+            "unknown package",
+            "no such package",
+            "package not found",
+        ],
+    ) {
+        (
+            "Board says this title is not installed anymore. Refresh the installed list if you want to confirm what is still there."
+                .into(),
+            Some("Board reported that the app was already missing.".into()),
+        )
+    } else {
+        (
+            "Keep Board connected, then try opening the title again.".into(),
+            first_non_empty_line(&combined_output),
+        )
+    };
+
+    LaunchInstalledTitleResult {
+        status: LaunchInstalledTitleStatus::Failed,
+        summary: format!("BE Home couldn't launch {display_name} on Board yet."),
         guidance,
         detail,
         command,
@@ -424,6 +593,22 @@ fn blocked_uninstall_result(
     UninstallInstalledTitleResult {
         status: UninstallInstalledTitleStatus::Failed,
         summary: format!("BE Home couldn't start removing {display_name} yet."),
+        guidance: guidance.1,
+        detail: guidance.2.or_else(|| Some(guidance.0.into())),
+        command: command.into(),
+        exit_code,
+    }
+}
+
+fn blocked_launch_result(
+    display_name: &str,
+    command: &str,
+    exit_code: Option<i32>,
+    guidance: (&'static str, String, Option<String>),
+) -> LaunchInstalledTitleResult {
+    LaunchInstalledTitleResult {
+        status: LaunchInstalledTitleStatus::Failed,
+        summary: format!("BE Home couldn't start launching {display_name} yet."),
         guidance: guidance.1,
         detail: guidance.2.or_else(|| Some(guidance.0.into())),
         command: command.into(),
@@ -485,6 +670,70 @@ fn device_guidance_for_install(
         device::DeviceStatusKind::UnsupportedHost => (
             "unsupported",
             "This computer is outside Board's current support for desktop installs.".into(),
+            Some(device_status.guidance.clone()),
+        ),
+        device::DeviceStatusKind::BoardConnected => (
+            "ready",
+            "Board is connected.".into(),
+            None,
+        ),
+    }
+}
+
+fn tool_guidance_for_launch(
+    tool_state: &bdb_tool::BdbToolState,
+) -> (&'static str, String, Option<String>) {
+    match tool_state.status {
+        bdb_tool::BdbToolStatus::Unsupported => (
+            "unsupported",
+            "This computer cannot use Board's current desktop tool yet, so BE Home can't open titles from here.".into(),
+            Some(tool_state.guidance.clone()),
+        ),
+        bdb_tool::BdbToolStatus::Missing => (
+            "missing",
+            "Download Board's install tool before trying to open a title from Board.".into(),
+            Some(tool_state.guidance.clone()),
+        ),
+        bdb_tool::BdbToolStatus::Downloaded => (
+            "repair",
+            "Repair bdb from settings, then try opening the title again.".into(),
+            Some(tool_state.guidance.clone()),
+        ),
+        bdb_tool::BdbToolStatus::Runnable => (
+            "ready",
+            "Board's install tool is ready.".into(),
+            None,
+        ),
+    }
+}
+
+fn device_guidance_for_launch(
+    device_status: &device::DeviceStatusSnapshot,
+) -> (&'static str, String, Option<String>) {
+    match device_status.status {
+        device::DeviceStatusKind::BoardDisconnected => (
+            "disconnected",
+            "Connect Board with USB, unlock it if needed, then try opening the title again.".into(),
+            Some(device_status.guidance.clone()),
+        ),
+        device::DeviceStatusKind::ExecutionError => (
+            "retry",
+            "Refresh the Board connection check before trying to open the title again.".into(),
+            Some(device_status.guidance.clone()),
+        ),
+        device::DeviceStatusKind::ToolBroken => (
+            "repair",
+            "Repair bdb from settings, then try opening the title again.".into(),
+            Some(device_status.guidance.clone()),
+        ),
+        device::DeviceStatusKind::ToolMissing => (
+            "missing",
+            "Download Board's install tool before trying to open a title from Board.".into(),
+            Some(device_status.guidance.clone()),
+        ),
+        device::DeviceStatusKind::UnsupportedHost => (
+            "unsupported",
+            "This computer cannot use Board's current desktop tool yet, so BE Home can't open titles from here.".into(),
             Some(device_status.guidance.clone()),
         ),
         device::DeviceStatusKind::BoardConnected => (
@@ -560,7 +809,8 @@ fn classify_process_failure(error: io::Error) -> ProcessRunFailure {
 #[cfg(test)]
 mod tests {
     use super::{
-        install_apk_with_runner, uninstall_installed_title_with_runner, InstallApkStatus,
+        install_apk_with_runner, launch_installed_title_with_runner,
+        uninstall_installed_title_with_runner, InstallApkStatus, LaunchInstalledTitleStatus,
         ProcessRunFailure, ProcessRunFailureKind, ProcessRunOutput, ProcessRunner,
         UninstallInstalledTitleStatus,
     };
@@ -757,6 +1007,92 @@ mod tests {
 
         assert_eq!(UninstallInstalledTitleStatus::Failed, result.status);
         assert!(result.guidance.contains("Connect Board"));
+    }
+
+    #[test]
+    fn launch_succeeds_when_bdb_returns_zero() {
+        let result = launch_installed_title_with_runner(
+            &sample_runnable_tool_state(),
+            &sample_device_status(device::DeviceStatusKind::BoardConnected),
+            "fun.board.luckydice",
+            "Lucky Dice",
+            &MockProcessRunner {
+                outcome: Ok(ProcessRunOutput {
+                    exit_code: Some(0),
+                    stdout: "Launched fun.board.luckydice".into(),
+                    stderr: String::new(),
+                }),
+            },
+        );
+
+        assert_eq!(LaunchInstalledTitleStatus::Launched, result.status);
+        assert!(result.summary.contains("Lucky Dice"));
+    }
+
+    #[test]
+    fn launch_uses_launch_specific_guidance_when_tool_is_not_runnable() {
+        let mut tool_state = sample_runnable_tool_state();
+        tool_state.status = bdb_tool::BdbToolStatus::Downloaded;
+        tool_state.guidance = "Repair guidance from the current tool snapshot.".into();
+
+        let result = launch_installed_title_with_runner(
+            &tool_state,
+            &sample_device_status(device::DeviceStatusKind::BoardConnected),
+            "fun.board.luckydice",
+            "Lucky Dice",
+            &MockProcessRunner {
+                outcome: Ok(ProcessRunOutput {
+                    exit_code: Some(0),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                }),
+            },
+        );
+
+        assert_eq!(LaunchInstalledTitleStatus::Failed, result.status);
+        assert!(result.guidance.contains("opening the title again"));
+        assert!(!result.guidance.contains("trying this install again"));
+    }
+
+    #[test]
+    fn launch_maps_missing_package_output_to_guidance() {
+        let result = launch_installed_title_with_runner(
+            &sample_runnable_tool_state(),
+            &sample_device_status(device::DeviceStatusKind::BoardConnected),
+            "fun.board.luckydice",
+            "Lucky Dice",
+            &MockProcessRunner {
+                outcome: Ok(ProcessRunOutput {
+                    exit_code: Some(1),
+                    stdout: "Package not installed".into(),
+                    stderr: String::new(),
+                }),
+            },
+        );
+
+        assert_eq!(LaunchInstalledTitleStatus::Failed, result.status);
+        assert!(result.guidance.contains("not installed anymore"));
+    }
+
+    #[test]
+    fn launch_does_not_treat_device_not_found_as_a_missing_package() {
+        let result = launch_installed_title_with_runner(
+            &sample_runnable_tool_state(),
+            &sample_device_status(device::DeviceStatusKind::BoardConnected),
+            "fun.board.luckydice",
+            "Lucky Dice",
+            &MockProcessRunner {
+                outcome: Ok(ProcessRunOutput {
+                    exit_code: Some(1),
+                    stdout: String::new(),
+                    stderr: "device not found".into(),
+                }),
+            },
+        );
+
+        assert_eq!(LaunchInstalledTitleStatus::Failed, result.status);
+        assert!(result.guidance.contains("Keep Board connected"));
+        assert!(!result.guidance.contains("not installed anymore"));
     }
 
     fn sample_apk_path() -> &'static Path {

@@ -6,6 +6,7 @@ import {
   importApkToManagedLibrary,
   installApkToConnectedBoard,
   inspectManualApkPath,
+  launchInstalledTitleOnBoard,
   loadApkDiscoverySnapshot,
   loadDesktopSettings,
   loadDeviceStatusSnapshot,
@@ -24,6 +25,7 @@ import type {
   DeviceStatusSnapshot,
   InstallApkResult,
   InstalledTitlesSnapshot,
+  LaunchInstalledTitleResult,
   ManagedApkLibraryImportResult,
   ManagedApkLibrarySnapshot,
   ManagedStorageLocation,
@@ -205,17 +207,19 @@ function App() {
   });
   const apkInstallInFlightRef = useRef(false);
   const [installedTitleActionState, setInstalledTitleActionState] = useState<{
+    actionKind: "launch" | "uninstall" | null;
     actionPackage: string | null;
     confirmPackage: string | null;
     message: string | null;
     detail: string | null;
-    lastStatus: UninstallInstalledTitleResult["status"] | null;
+    tone: "success" | "warning" | null;
   }>({
+    actionKind: null,
     actionPackage: null,
     confirmPackage: null,
     message: null,
     detail: null,
-    lastStatus: null,
+    tone: null,
   });
   const [windowFocused, setWindowFocused] = useState(true);
   const [documentVisible, setDocumentVisible] = useState(
@@ -808,10 +812,11 @@ function App() {
   function handleRequestUninstall(packageName: string): void {
     setInstalledTitleActionState((previous) => ({
       ...previous,
+      actionKind: null,
       confirmPackage: packageName,
       message: null,
       detail: null,
-      lastStatus: null,
+      tone: null,
     }));
   }
 
@@ -827,21 +832,23 @@ function App() {
     displayName: string,
   ): Promise<UninstallInstalledTitleResult | null> {
     setInstalledTitleActionState({
+      actionKind: "uninstall",
       actionPackage: packageName,
       confirmPackage: packageName,
       message: null,
       detail: null,
-      lastStatus: null,
+      tone: null,
     });
 
     try {
       const result = await uninstallInstalledTitleFromBoard(packageName, displayName);
       setInstalledTitleActionState({
+        actionKind: null,
         actionPackage: null,
         confirmPackage: null,
         message: result.summary,
         detail: result.detail ?? result.guidance,
-        lastStatus: result.status,
+        tone: result.status === "removed" ? "success" : "warning",
       });
 
       if (result.status === "removed") {
@@ -852,11 +859,51 @@ function App() {
       return result;
     } catch {
       setInstalledTitleActionState({
+        actionKind: null,
         actionPackage: null,
         confirmPackage: null,
         message: `BE Home couldn't remove ${displayName} just yet.`,
         detail: "Please keep Board connected and try removing the title again in a moment.",
-        lastStatus: "failed",
+        tone: "warning",
+      });
+      return null;
+    }
+  }
+
+  async function handleLaunchInstalledTitle(
+    packageName: string,
+    displayName: string,
+  ): Promise<LaunchInstalledTitleResult | null> {
+    setInstalledTitleActionState({
+      actionKind: "launch",
+      actionPackage: packageName,
+      confirmPackage: null,
+      message: null,
+      detail: null,
+      tone: null,
+    });
+
+    try {
+      const result = await launchInstalledTitleOnBoard(packageName, displayName);
+      setInstalledTitleActionState({
+        actionKind: null,
+        actionPackage: null,
+        confirmPackage: null,
+        message: result.summary,
+        detail: result.detail ?? result.guidance,
+        tone: result.status === "launched" ? "success" : "warning",
+      });
+
+      await refreshDeviceStatus("manual");
+      return result;
+    } catch {
+      setInstalledTitleActionState({
+        actionKind: null,
+        actionPackage: null,
+        confirmPackage: null,
+        message: `BE Home couldn't launch ${displayName} just yet.`,
+        detail: "Please keep Board connected and try opening the title again in a moment.",
+        tone: "warning",
       });
       return null;
     }
@@ -1076,6 +1123,9 @@ function App() {
                   installedTitleActionState={installedTitleActionState}
                   installedTitlesState={installedTitlesState}
                   onCancelUninstall={() => handleCancelUninstall()}
+                  onLaunchTitle={(packageName, displayName) =>
+                    void handleLaunchInstalledTitle(packageName, displayName)
+                  }
                   onRefresh={() => void refreshInstalledTitles("manual")}
                   onRequestUninstall={(packageName) => handleRequestUninstall(packageName)}
                   onUninstallTitle={(packageName, displayName) =>
@@ -1510,11 +1560,12 @@ function ApkLibraryWorkspacePanel({
 
 interface InstalledTitlesWorkspacePanelProps {
   installedTitleActionState: {
+    actionKind: "launch" | "uninstall" | null;
     actionPackage: string | null;
     confirmPackage: string | null;
     message: string | null;
     detail: string | null;
-    lastStatus: UninstallInstalledTitleResult["status"] | null;
+    tone: "success" | "warning" | null;
   };
   installedTitlesState: {
     loading: boolean;
@@ -1523,6 +1574,7 @@ interface InstalledTitlesWorkspacePanelProps {
     errorDetail: string | null;
   };
   onCancelUninstall: () => void;
+  onLaunchTitle: (packageName: string, displayName: string) => void;
   onRefresh: () => void;
   onRequestUninstall: (packageName: string) => void;
   onUninstallTitle: (packageName: string, displayName: string) => void;
@@ -1532,6 +1584,7 @@ function InstalledTitlesWorkspacePanel({
   installedTitleActionState,
   installedTitlesState,
   onCancelUninstall,
+  onLaunchTitle,
   onRefresh,
   onRequestUninstall,
   onUninstallTitle,
@@ -1574,7 +1627,7 @@ function InstalledTitlesWorkspacePanel({
         {installedTitleActionState.message !== null ? (
           <article
             className={
-              installedTitleActionState.lastStatus === "failed"
+              installedTitleActionState.tone === "warning"
                 ? "desktop-inline-message desktop-inline-message--warning"
                 : "desktop-inline-message"
             }
@@ -1658,6 +1711,7 @@ function InstalledTitlesWorkspacePanel({
                           type="button"
                         >
                           {installedTitleActionState.actionPackage === title.packageName
+                          && installedTitleActionState.actionKind === "uninstall"
                             ? "Removing..."
                             : "Confirm remove"}
                         </button>
@@ -1671,14 +1725,31 @@ function InstalledTitlesWorkspacePanel({
                         </button>
                       </div>
                     ) : (
-                      <button
-                        className="secondary-button desktop-inline-button"
-                        disabled={installedTitleActionState.actionPackage === title.packageName}
-                        onClick={() => onRequestUninstall(title.packageName!)}
-                        type="button"
-                      >
-                        Remove from Board
-                      </button>
+                      <div className="desktop-inline-action-stack">
+                        {title.canLaunch ? (
+                          <button
+                            className="primary-button desktop-inline-button"
+                            disabled={
+                              installedTitleActionState.actionPackage === title.packageName
+                            }
+                            onClick={() => onLaunchTitle(title.packageName!, title.displayName)}
+                            type="button"
+                          >
+                            {installedTitleActionState.actionPackage === title.packageName &&
+                            installedTitleActionState.actionKind === "launch"
+                              ? "Launching..."
+                              : "Open on Board"}
+                          </button>
+                        ) : null}
+                        <button
+                          className="secondary-button desktop-inline-button"
+                          disabled={installedTitleActionState.actionPackage === title.packageName}
+                          onClick={() => onRequestUninstall(title.packageName!)}
+                          type="button"
+                        >
+                          Remove from Board
+                        </button>
+                      </div>
                     )
                   ) : null}
                 </div>
@@ -1785,14 +1856,14 @@ function DeviceWorkspacePanel({
               />
             </dl>
 
-            <StatusSummaryCard
-              title="Current bdb version check"
-              summary={snapshot.bdbVersion.summary}
-              guidance={snapshot.bdbVersion.detail ?? snapshot.guidance}
-            />
-          </>
-        )}
-      </article>
+              <StatusSummaryCard
+                title="Current bdb version check"
+                summary={snapshot.bdbVersion.summary}
+                guidance={snapshot.bdbVersion.detail ?? snapshot.guidance}
+              />
+            </>
+          )}
+        </article>
 
       {guidanceContent === null ? (
         <article className="panel desktop-workspace-panel">
