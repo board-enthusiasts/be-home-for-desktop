@@ -436,6 +436,9 @@ function App() {
 
   async function handleAcquireBdbTool(
     repair: boolean,
+    options?: {
+      showReviewDefaultsOnReady?: boolean;
+    },
   ): Promise<BdbAcquisitionResult | null> {
     setToolActionState({
       loading: true,
@@ -452,10 +455,12 @@ function App() {
         detail: result.guidance,
         lastOutcome: result.outcome,
       });
+      const shouldShowReviewDefaults =
+        options?.showReviewDefaultsOnReady === true &&
+        result.toolState.status === "runnable" &&
+        (result.outcome === "downloaded" || result.outcome === "repaired");
       await refreshSetupGateState({
-        showReviewDefaultsOnReady:
-          result.toolState.status === "runnable" &&
-          (result.outcome === "downloaded" || result.outcome === "repaired"),
+        showReviewDefaultsOnReady: shouldShowReviewDefaults,
       });
       return result;
     } catch {
@@ -592,7 +597,15 @@ function App() {
   }
 
   async function handleRepairFromSettings(): Promise<void> {
-    const result = await handleAcquireBdbTool(true);
+    setSettingsActionState({
+      loading: true,
+      message: null,
+      detail: null,
+    });
+
+    const result = await handleAcquireBdbTool(true, {
+      showReviewDefaultsOnReady: false,
+    });
     if (result === null) {
       setSettingsActionState({
         loading: false,
@@ -755,8 +768,16 @@ function App() {
                   setupGateState={setupGateState}
                   toolActionState={toolActionState}
                   onBack={() => setSetupViewStep("systemCheck")}
-                  onDownload={() => void handleAcquireBdbTool(false)}
-                  onRepair={() => void handleAcquireBdbTool(true)}
+                  onDownload={() =>
+                    void handleAcquireBdbTool(false, {
+                      showReviewDefaultsOnReady: true,
+                    })
+                  }
+                  onRepair={() =>
+                    void handleAcquireBdbTool(true, {
+                      showReviewDefaultsOnReady: true,
+                    })
+                  }
                   onRefresh={() => void refreshSetupGateState()}
                 />
               ) : null}
@@ -1045,8 +1066,8 @@ function InstalledTitlesWorkspacePanel({
         <div className="eyebrow">Installed on Board</div>
         <h2>Keep the current Board inventory in one stable place.</h2>
         <p className="panel-description">
-          This view turns `bdb list` into a title model the later uninstall and launch work can
-          reuse, without asking the renderer to parse command output on its own.
+          This view keeps the titles Board is already reporting in one easy place, so you can
+          confirm what is on the device before you reach for another install.
         </p>
 
         {snapshot !== null ? (
@@ -1101,8 +1122,8 @@ function InstalledTitlesWorkspacePanel({
         <div className="eyebrow">Current inventory</div>
         <h2>See the titles Board is already reporting.</h2>
         <p className="panel-description">
-          Package identity stays with each entry when BE Home can read it, so later launch and
-          uninstall actions have a stable place to start.
+          When Board shares package details, BE Home keeps them with each entry so the list stays
+          specific and dependable.
         </p>
 
         {snapshot === null ? (
@@ -1235,7 +1256,12 @@ function DeviceWorkspacePanel({
             <StatusSummaryCard
               title="Current bdb version check"
               summary={snapshot.bdbVersion.summary}
-              guidance={snapshot.guidance}
+              guidance={
+                snapshot.bdbVersion.detail ??
+                (snapshot.bdbVersion.status === "available"
+                  ? "BE Home confirmed the managed bdb version during the latest device check."
+                  : "Try refreshing the device check again after repairing bdb if the version is still unavailable.")
+              }
             />
           </>
         )}
@@ -1249,6 +1275,16 @@ function DeviceWorkspacePanel({
             Once BE Home has the current Board status, this area will turn it into simple recovery
             guidance instead of terminal-style troubleshooting.
           </p>
+          <div className="desktop-action-row">
+            <button
+              className="secondary-button"
+              disabled={deviceStatusState.loading}
+              onClick={onRefresh}
+              type="button"
+            >
+              {deviceStatusState.loading ? "Refreshing..." : "Refresh device check"}
+            </button>
+          </div>
         </article>
       ) : (
         <article

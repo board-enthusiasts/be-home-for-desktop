@@ -181,14 +181,14 @@ fn normalize_list_output(output: ProcessRunOutput) -> InstalledTitlesSnapshot {
     let combined_output = combined_output_text(&output);
     let titles = parse_installed_titles(&combined_output);
 
-    if output.exit_code != Some(0) && titles.is_empty() {
+    if output.exit_code != Some(0) {
         return InstalledTitlesSnapshot {
             status: InstalledTitlesStatus::Unavailable,
             summary: "BE Home could not finish reading the installed-title list from Board yet."
                 .into(),
             guidance:
                 "Reconnect Board if needed, then refresh the installed titles again.".into(),
-            titles,
+            titles: Vec::new(),
         };
     }
 
@@ -197,7 +197,9 @@ fn normalize_list_output(output: ProcessRunOutput) -> InstalledTitlesSnapshot {
             return InstalledTitlesSnapshot {
                 status: InstalledTitlesStatus::Empty,
                 summary: "Board did not report any installed titles yet.".into(),
-                guidance: "Once you install something, it will show up here so uninstall and launch actions can stay close by.".into(),
+                guidance:
+                    "Once you install something on Board, it will show up here so you can find it again quickly."
+                        .into(),
                 titles,
             };
         }
@@ -217,7 +219,7 @@ fn normalize_list_output(output: ProcessRunOutput) -> InstalledTitlesSnapshot {
         status: InstalledTitlesStatus::Ready,
         summary: format!("Board reported {} installed title(s).", titles.len()),
         guidance:
-            "This list is ready for the later uninstall and launch actions that stay tied to package identity."
+            "When Board shares package details, BE Home keeps them with each title so this list stays specific and easy to trust."
                 .into(),
         titles,
     }
@@ -588,6 +590,24 @@ mod tests {
                     exit_code: Some(0),
                     stdout: "::::\n====".into(),
                     stderr: String::new(),
+                }),
+            },
+        );
+
+        assert_eq!(InstalledTitlesStatus::Unavailable, snapshot.status);
+        assert!(snapshot.titles.is_empty());
+    }
+
+    #[test]
+    fn non_zero_exit_discards_partially_parsed_titles() {
+        let snapshot = load_installed_titles_snapshot_with_runner(
+            &connected_device_status(),
+            &runnable_tool_state(),
+            &StaticRunner {
+                result: Ok(ProcessRunOutput {
+                    exit_code: Some(1),
+                    stdout: "Lucky Dice (co.board.luckydice)".into(),
+                    stderr: "connection dropped".into(),
                 }),
             },
         );
