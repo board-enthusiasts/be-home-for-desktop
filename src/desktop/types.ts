@@ -35,6 +35,11 @@ export type ApkCandidateSource = "scanFolder" | "manualSelection";
 export type ApkDiscoveryStatus = "ready" | "empty";
 
 /**
+ * Describes the current Board-confidence level for one APK candidate.
+ */
+export type ApkConfidence = "strongMatch" | "possibleMatch" | "unknown";
+
+/**
  * Describes one locally discovered APK candidate.
  */
 export interface ApkCandidate {
@@ -44,6 +49,9 @@ export interface ApkCandidate {
   discoverySource: ApkCandidateSource;
   discoveredFromPath: string | null;
   fileSizeBytes: number;
+  packageName: string | null;
+  confidence: ApkConfidence;
+  confidenceSummary: string;
 }
 
 /**
