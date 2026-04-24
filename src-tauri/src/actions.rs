@@ -422,7 +422,12 @@ fn normalize_uninstall_output(
     let normalized_output = combined_output.to_ascii_lowercase();
     let (guidance, detail) = if contains_any(
         &normalized_output,
-        &["not installed", "not found", "unknown package", "no such package"],
+        &[
+            "not installed",
+            "unknown package",
+            "no such package",
+            "package not found",
+        ],
     ) {
         (
             "Board says this title is not installed anymore. Refresh the installed list and try again if you still need to clean it up."
@@ -460,7 +465,7 @@ fn launch_installed_title_with_runner<P: ProcessRunner>(
             display_name,
             &command,
             None,
-            tool_guidance_for_install(tool_state),
+            tool_guidance_for_launch(tool_state),
         );
     }
 
@@ -469,7 +474,7 @@ fn launch_installed_title_with_runner<P: ProcessRunner>(
             display_name,
             &command,
             None,
-            device_guidance_for_install(device_status),
+            device_guidance_for_launch(device_status),
         );
     }
 
@@ -534,7 +539,12 @@ fn normalize_launch_output(
     let normalized_output = combined_output.to_ascii_lowercase();
     let (guidance, detail) = if contains_any(
         &normalized_output,
-        &["not installed", "not found", "unknown package", "no such package"],
+        &[
+            "not installed",
+            "unknown package",
+            "no such package",
+            "package not found",
+        ],
     ) {
         (
             "Board says this title is not installed anymore. Refresh the installed list if you want to confirm what is still there."
@@ -660,6 +670,70 @@ fn device_guidance_for_install(
         device::DeviceStatusKind::UnsupportedHost => (
             "unsupported",
             "This computer is outside Board's current support for desktop installs.".into(),
+            Some(device_status.guidance.clone()),
+        ),
+        device::DeviceStatusKind::BoardConnected => (
+            "ready",
+            "Board is connected.".into(),
+            None,
+        ),
+    }
+}
+
+fn tool_guidance_for_launch(
+    tool_state: &bdb_tool::BdbToolState,
+) -> (&'static str, String, Option<String>) {
+    match tool_state.status {
+        bdb_tool::BdbToolStatus::Unsupported => (
+            "unsupported",
+            "This computer cannot use Board's current desktop tool yet, so BE Home can't open titles from here.".into(),
+            Some(tool_state.guidance.clone()),
+        ),
+        bdb_tool::BdbToolStatus::Missing => (
+            "missing",
+            "Download Board's install tool before trying to open a title from Board.".into(),
+            Some(tool_state.guidance.clone()),
+        ),
+        bdb_tool::BdbToolStatus::Downloaded => (
+            "repair",
+            "Repair bdb from settings, then try opening the title again.".into(),
+            Some(tool_state.guidance.clone()),
+        ),
+        bdb_tool::BdbToolStatus::Runnable => (
+            "ready",
+            "Board's install tool is ready.".into(),
+            None,
+        ),
+    }
+}
+
+fn device_guidance_for_launch(
+    device_status: &device::DeviceStatusSnapshot,
+) -> (&'static str, String, Option<String>) {
+    match device_status.status {
+        device::DeviceStatusKind::BoardDisconnected => (
+            "disconnected",
+            "Connect Board with USB, unlock it if needed, then try opening the title again.".into(),
+            Some(device_status.guidance.clone()),
+        ),
+        device::DeviceStatusKind::ExecutionError => (
+            "retry",
+            "Refresh the Board connection check before trying to open the title again.".into(),
+            Some(device_status.guidance.clone()),
+        ),
+        device::DeviceStatusKind::ToolBroken => (
+            "repair",
+            "Repair bdb from settings, then try opening the title again.".into(),
+            Some(device_status.guidance.clone()),
+        ),
+        device::DeviceStatusKind::ToolMissing => (
+            "missing",
+            "Download Board's install tool before trying to open a title from Board.".into(),
+            Some(device_status.guidance.clone()),
+        ),
+        device::DeviceStatusKind::UnsupportedHost => (
+            "unsupported",
+            "This computer cannot use Board's current desktop tool yet, so BE Home can't open titles from here.".into(),
             Some(device_status.guidance.clone()),
         ),
         device::DeviceStatusKind::BoardConnected => (
@@ -895,6 +969,27 @@ mod tests {
     }
 
     #[test]
+    fn uninstall_does_not_treat_device_not_found_as_a_missing_package() {
+        let result = uninstall_installed_title_with_runner(
+            &sample_runnable_tool_state(),
+            &sample_device_status(device::DeviceStatusKind::BoardConnected),
+            "fun.board.luckydice",
+            "Lucky Dice",
+            &MockProcessRunner {
+                outcome: Ok(ProcessRunOutput {
+                    exit_code: Some(1),
+                    stdout: String::new(),
+                    stderr: "device not found".into(),
+                }),
+            },
+        );
+
+        assert_eq!(UninstallInstalledTitleStatus::Failed, result.status);
+        assert!(result.guidance.contains("Keep Board connected"));
+        assert!(!result.guidance.contains("not installed anymore"));
+    }
+
+    #[test]
     fn uninstall_requires_a_connected_board() {
         let result = uninstall_installed_title_with_runner(
             &sample_runnable_tool_state(),
@@ -935,6 +1030,31 @@ mod tests {
     }
 
     #[test]
+    fn launch_uses_launch_specific_guidance_when_tool_is_not_runnable() {
+        let mut tool_state = sample_runnable_tool_state();
+        tool_state.status = bdb_tool::BdbToolStatus::Downloaded;
+        tool_state.guidance = "Repair guidance from the current tool snapshot.".into();
+
+        let result = launch_installed_title_with_runner(
+            &tool_state,
+            &sample_device_status(device::DeviceStatusKind::BoardConnected),
+            "fun.board.luckydice",
+            "Lucky Dice",
+            &MockProcessRunner {
+                outcome: Ok(ProcessRunOutput {
+                    exit_code: Some(0),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                }),
+            },
+        );
+
+        assert_eq!(LaunchInstalledTitleStatus::Failed, result.status);
+        assert!(result.guidance.contains("opening the title again"));
+        assert!(!result.guidance.contains("trying this install again"));
+    }
+
+    #[test]
     fn launch_maps_missing_package_output_to_guidance() {
         let result = launch_installed_title_with_runner(
             &sample_runnable_tool_state(),
@@ -952,6 +1072,27 @@ mod tests {
 
         assert_eq!(LaunchInstalledTitleStatus::Failed, result.status);
         assert!(result.guidance.contains("not installed anymore"));
+    }
+
+    #[test]
+    fn launch_does_not_treat_device_not_found_as_a_missing_package() {
+        let result = launch_installed_title_with_runner(
+            &sample_runnable_tool_state(),
+            &sample_device_status(device::DeviceStatusKind::BoardConnected),
+            "fun.board.luckydice",
+            "Lucky Dice",
+            &MockProcessRunner {
+                outcome: Ok(ProcessRunOutput {
+                    exit_code: Some(1),
+                    stdout: String::new(),
+                    stderr: "device not found".into(),
+                }),
+            },
+        );
+
+        assert_eq!(LaunchInstalledTitleStatus::Failed, result.status);
+        assert!(result.guidance.contains("Keep Board connected"));
+        assert!(!result.guidance.contains("not installed anymore"));
     }
 
     fn sample_apk_path() -> &'static Path {
