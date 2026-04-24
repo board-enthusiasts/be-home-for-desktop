@@ -67,7 +67,37 @@ pub(crate) enum BdbArchitecture {
 #[serde(rename_all = "camelCase")]
 struct BdbSourceManifest {
     schema_version: u32,
-    platforms: BTreeMap<String, String>,
+    platforms: BTreeMap<String, BdbSourceManifestPlatform>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+enum BdbSourceManifestPlatform {
+    SchemaV1(String),
+    SchemaV2(BdbSourceManifestPlatformV2),
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BdbSourceManifestPlatformV2 {
+    download_url: String,
+    version: Option<String>,
+}
+
+impl BdbSourceManifestPlatform {
+    fn download_url(&self) -> &str {
+        match self {
+            Self::SchemaV1(download_url) => download_url,
+            Self::SchemaV2(platform) => &platform.download_url,
+        }
+    }
+
+    fn version(&self) -> Option<&str> {
+        match self {
+            Self::SchemaV1(_) => None,
+            Self::SchemaV2(platform) => platform.version.as_deref(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -103,6 +133,7 @@ pub(crate) struct BdbPlatformSupport {
 pub(crate) struct BdbDownloadSource {
     pub(crate) platform_key: String,
     pub(crate) download_url: String,
+    pub(crate) version: Option<String>,
 }
 
 /// Describes the maintained source-resolution plan for `bdb` on the current machine.
@@ -188,9 +219,10 @@ fn resolve_bdb_source_plan_for_platform(
             .manifest
             .platforms
             .get(platform_key)
-            .map(|download_url| BdbDownloadSource {
+            .map(|platform| BdbDownloadSource {
                 platform_key: platform_key.clone(),
-                download_url: download_url.clone(),
+                download_url: platform.download_url().to_owned(),
+                version: platform.version().map(str::to_owned),
             })
     });
 
@@ -352,7 +384,7 @@ fn save_cached_manifest(cache_path: &Path, manifest_text: &str) -> Result<(), St
 fn parse_manifest(manifest_text: &str) -> Result<BdbSourceManifest, String> {
     let manifest: BdbSourceManifest = serde_json::from_str(manifest_text)
         .map_err(|error| format!("The bdb manifest JSON was invalid: {error}"))?;
-    if manifest.schema_version != 1 {
+    if manifest.schema_version != 1 && manifest.schema_version != 2 {
         return Err(format!(
             "The bdb manifest used unsupported schema version {}.",
             manifest.schema_version
@@ -433,7 +465,7 @@ mod tests {
     use super::{
         bundled_manifest, load_manifest_with_fallbacks, parse_manifest, parse_windows_build_number,
         resolve_bdb_source_plan_for_platform, BdbArchitecture, BdbOperatingSystem,
-        BdbSupportStatus, BdbUnsupportedReason, DetectedPlatform, LoadedManifest,
+        BdbSourceManifestPlatform, BdbSupportStatus, BdbUnsupportedReason, DetectedPlatform, LoadedManifest,
         LINUX_X86_64_PLATFORM_KEY, MACOS_UNIVERSAL_PLATFORM_KEY, WINDOWS_X86_64_PLATFORM_KEY,
     };
     use std::cell::Cell;
@@ -443,18 +475,27 @@ mod tests {
     fn bundled_manifest_tracks_current_board_download_urls() {
         let manifest = bundled_manifest();
 
-        assert_eq!(1, manifest.schema_version);
+        assert_eq!(2, manifest.schema_version);
         assert_eq!(
-            Some(&"https://dev.board.fun/downloads/bdb/macos-universal/bdb".to_string()),
-            manifest.platforms.get(MACOS_UNIVERSAL_PLATFORM_KEY)
+            Some("https://dev.board.fun/downloads/bdb/macos-universal/bdb"),
+            manifest
+                .platforms
+                .get(MACOS_UNIVERSAL_PLATFORM_KEY)
+                .map(BdbSourceManifestPlatform::download_url)
         );
         assert_eq!(
-            Some(&"https://dev.board.fun/downloads/bdb/linux/bdb".to_string()),
-            manifest.platforms.get(LINUX_X86_64_PLATFORM_KEY)
+            Some("https://dev.board.fun/downloads/bdb/linux/bdb"),
+            manifest
+                .platforms
+                .get(LINUX_X86_64_PLATFORM_KEY)
+                .map(BdbSourceManifestPlatform::download_url)
         );
         assert_eq!(
-            Some(&"https://dev.board.fun/downloads/bdb/windows/bdb.exe".to_string()),
-            manifest.platforms.get(WINDOWS_X86_64_PLATFORM_KEY)
+            Some("https://dev.board.fun/downloads/bdb/windows/bdb.exe"),
+            manifest
+                .platforms
+                .get(WINDOWS_X86_64_PLATFORM_KEY)
+                .map(BdbSourceManifestPlatform::download_url)
         );
     }
 
@@ -475,8 +516,12 @@ mod tests {
 
         assert_eq!("remote", loaded.source);
         assert_eq!(
-            Some(&"https://example.com/linux/bdb".to_string()),
-            loaded.manifest.platforms.get(LINUX_X86_64_PLATFORM_KEY)
+            Some("https://example.com/linux/bdb"),
+            loaded
+                .manifest
+                .platforms
+                .get(LINUX_X86_64_PLATFORM_KEY)
+                .map(BdbSourceManifestPlatform::download_url)
         );
         assert!(fs::read_to_string(cache_path)
             .expect("cache file should be written")
@@ -507,8 +552,12 @@ mod tests {
 
         assert_eq!("cached", loaded.source);
         assert_eq!(
-            Some(&"https://cached.example/bdb".to_string()),
-            loaded.manifest.platforms.get(LINUX_X86_64_PLATFORM_KEY)
+            Some("https://cached.example/bdb"),
+            loaded
+                .manifest
+                .platforms
+                .get(LINUX_X86_64_PLATFORM_KEY)
+                .map(BdbSourceManifestPlatform::download_url)
         );
     }
 
@@ -540,8 +589,12 @@ mod tests {
         assert_eq!("cached", loaded.source);
         assert!(!remote_fetch_attempted.get());
         assert_eq!(
-            Some(&"https://cached.example/bdb".to_string()),
-            loaded.manifest.platforms.get(LINUX_X86_64_PLATFORM_KEY)
+            Some("https://cached.example/bdb"),
+            loaded
+                .manifest
+                .platforms
+                .get(LINUX_X86_64_PLATFORM_KEY)
+                .map(BdbSourceManifestPlatform::download_url)
         );
     }
 
@@ -558,14 +611,18 @@ mod tests {
 
         assert_eq!("bundled", loaded.source);
         assert_eq!(
-            Some(&"https://dev.board.fun/downloads/bdb/linux/bdb".to_string()),
-            loaded.manifest.platforms.get(LINUX_X86_64_PLATFORM_KEY)
+            Some("https://dev.board.fun/downloads/bdb/linux/bdb"),
+            loaded
+                .manifest
+                .platforms
+                .get(LINUX_X86_64_PLATFORM_KEY)
+                .map(BdbSourceManifestPlatform::download_url)
         );
     }
 
     #[test]
     fn manifest_parser_rejects_unknown_schema_versions() {
-        let result = parse_manifest(r#"{"schemaVersion":2,"platforms":{}}"#);
+        let result = parse_manifest(r#"{"schemaVersion":3,"platforms":{}}"#);
 
         assert!(result.is_err());
     }

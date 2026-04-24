@@ -193,6 +193,7 @@ export interface DeviceStatusSnapshot {
   summary: string;
   guidance: string;
   detail: string | null;
+  boardOsVersion: string | null;
   pollIntervalMs: number;
   bdbVersion: BdbVersionDetails;
 }
@@ -268,6 +269,7 @@ export interface BdbPlatformSupport {
 export interface BdbDownloadSource {
   platformKey: string;
   downloadUrl: string;
+  version: string | null;
 }
 
 /**
@@ -293,6 +295,53 @@ export type BdbToolStatus = "unsupported" | "missing" | "downloaded" | "runnable
 export type BdbRunnableStatus = "unsupported" | "missing" | "blocked" | "runnable";
 
 /**
+ * Describes whether BE Home could read a friendly Board Install Tool version line.
+ */
+export type BdbToolVersionStatus = "available" | "unavailable";
+
+/**
+ * Describes the latest `bdb version` check for the managed Board Install Tool.
+ */
+export interface BdbToolVersionCheck {
+  status: BdbToolVersionStatus;
+  command: string;
+  value: string | null;
+  exitCode: number | null;
+  summary: string;
+  detail: string | null;
+}
+
+/**
+ * Describes the latest manual update-check result for the managed Board Install Tool.
+ */
+export type BdbUpdateStatusKind =
+  | "upToDate"
+  | "updateAvailable"
+  | "unknown"
+  | "unsupported"
+  | "error";
+
+/**
+ * Describes whether the current Board Install Tool matches BE Home's latest source version.
+ */
+export interface BdbUpdateStatus {
+  status: BdbUpdateStatusKind;
+  currentVersion: string | null;
+  availableVersion: string | null;
+  guidance: string;
+}
+
+/**
+ * Describes a prefilled Board support request draft for unsupported-OS cases.
+ */
+export interface SupportRequestDraft {
+  to: string;
+  subject: string;
+  body: string;
+  mailtoUrl: string;
+}
+
+/**
  * Describes the latest no-device-required validation result for the managed `bdb` binary.
  */
 export interface BdbRunnableValidation {
@@ -314,6 +363,9 @@ export interface BdbToolState {
   executableExists: boolean;
   storage: ManagedStorageLocation;
   sourcePlan: BdbSourcePlan;
+  versionCheck: BdbToolVersionCheck;
+  updateStatus: BdbUpdateStatus;
+  supportRequestDraft: SupportRequestDraft | null;
   validation: BdbRunnableValidation;
 }
 
@@ -389,7 +441,15 @@ export interface DesktopSettings {
   bdbTools: ManagedStorageLocation;
   apkLibrary: ManagedStorageLocation;
   bdbExecutablePath: string;
+  boardConnection: BoardConnectionSettings;
   scanFolders: ConfiguredScanFolder[];
+}
+
+/**
+ * Describes the saved Board connection preferences for the desktop app.
+ */
+export interface BoardConnectionSettings {
+  pollIntervalSeconds: number;
 }
 
 /**
@@ -405,5 +465,6 @@ export interface ManagedStorageOverridesInput {
  */
 export interface DesktopSettingsInput {
   apkLibraryOverride: string | null;
+  boardConnectionPollIntervalSeconds?: number;
   scanFolderPaths: string[];
 }

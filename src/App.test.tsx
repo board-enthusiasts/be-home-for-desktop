@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import type {
   ApkDiscoverySnapshot,
+  BdbToolState,
   DesktopSettings,
   DeviceStatusSnapshot,
   InstalledTitlesSnapshot,
@@ -26,16 +27,18 @@ const currentWindowState = vi.hoisted(() => ({
 const onFocusChangedMock = vi.hoisted(() => vi.fn().mockResolvedValue(() => {}));
 const onThemeChangedMock = vi.hoisted(() => vi.fn().mockResolvedValue(() => {}));
 const onCloseRequestedMock = vi.hoisted(() => vi.fn().mockResolvedValue(() => {}));
+const closeWindowMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: vi.fn(() => ({
     get label() {
       return currentWindowState.label;
     },
-    theme: vi.fn().mockResolvedValue(currentWindowState.theme),
+    theme: vi.fn(() => Promise.resolve(currentWindowState.theme)),
     onThemeChanged: onThemeChangedMock,
     onFocusChanged: onFocusChangedMock,
     onCloseRequested: onCloseRequestedMock,
+    close: closeWindowMock,
   })),
 }));
 
@@ -59,63 +62,107 @@ const listenMock = vi.mocked(listen);
 const openMock = vi.mocked(open);
 const getCurrentWindowMock = vi.mocked(getCurrentWindow);
 
-const missingToolFixture: SetupGateState = {
+const runnableToolFixture: BdbToolState = {
+  status: "runnable",
+  summary: "Board's install tool is ready to use.",
+  guidance: "BE Home confirmed that the Board Install Tool can open from its saved location.",
+  executablePath:
+    "C:\\Users\\Matt\\AppData\\Local\\Board Enthusiasts\\BE Home for Desktop\\tools\\bdb.exe",
+  executableExists: true,
+  storage: {
+    defaultPath: "C:\\Users\\Matt\\AppData\\Local\\Board Enthusiasts\\BE Home for Desktop\\tools",
+    overridePath: null,
+    effectivePath: "C:\\Users\\Matt\\AppData\\Local\\Board Enthusiasts\\BE Home for Desktop\\tools",
+    source: "default",
+  },
+  sourcePlan: {
+    manifestSource: "bundled",
+    remoteManifestUrl: "https://example.com/bdb-sources.json",
+    manifestCachePath: null,
+    manifestSchemaVersion: 2,
+    support: {
+      status: "supported",
+      operatingSystem: "windows",
+      architecture: "x86_64",
+      windowsBuild: 26100,
+      platformKey: "windows-x86_64",
+      reason: null,
+      guidance: "This machine matches a Board-published bdb target.",
+    },
+    source: {
+      platformKey: "windows-x86_64",
+      downloadUrl: "https://example.com/bdb.exe",
+      version: "Board OS Version: 1.8.1",
+    },
+  },
+  versionCheck: {
+    status: "available",
+    command: "bdb version",
+    value: "Board OS Version: 1.8.1",
+    exitCode: 0,
+    summary: "Installed version: Board OS Version: 1.8.1",
+    detail: null,
+  },
+  updateStatus: {
+    status: "upToDate",
+    currentVersion: "Board OS Version: 1.8.1",
+    availableVersion: "Board OS Version: 1.8.1",
+    guidance: "This Board Install Tool matches the latest version in BE Home's source list.",
+  },
+  supportRequestDraft: null,
+  validation: {
+    status: "runnable",
+    command: "bdb help",
+    exitCode: 0,
+    summary: "BE Home could open bdb from its managed tools folder.",
+    detail: null,
+  },
+};
+
+const missingToolFixture: BdbToolState = {
+  ...runnableToolFixture,
+  status: "missing",
+  summary: "BE Home has not downloaded bdb into the managed tools folder yet.",
+  guidance: "Continue setup and BE Home will download Board's bdb into its managed tools folder for you.",
+  executableExists: false,
+  versionCheck: {
+    status: "unavailable",
+    command: "bdb version",
+    value: null,
+    exitCode: null,
+    summary: "BE Home has not downloaded the Board Install Tool yet.",
+    detail: null,
+  },
+  updateStatus: {
+    status: "unknown",
+    currentVersion: null,
+    availableVersion: "Board OS Version: 1.8.1",
+    guidance:
+      "Download the Board Install Tool first, then use Check for Update whenever you want to compare it with Board's latest download.",
+  },
+  validation: {
+    status: "missing",
+    command: "bdb help",
+    exitCode: null,
+    summary: "No managed bdb executable is present yet.",
+    detail: null,
+  },
+};
+
+const readySetupFixture: SetupGateState = {
   appName: "BE Home for Desktop",
   version: "0.1.0",
   platformLabel: "Windows",
-  status: "requiresSetup",
-  requiredStep: "toolSetup",
-  summary: "BE Home still needs to download Board's install tool before the workspace can open.",
-  guidance: "Continue setup and BE Home will download Board's bdb into its managed tools folder for you.",
-  toolState: {
-    status: "missing",
-    summary: "Board's install tool is missing.",
-    guidance: "Download bdb so BE Home can keep Board actions inside the desktop flow.",
-    executablePath: "C:\\Users\\Matt\\AppData\\Local\\Board Enthusiasts\\BE Home for Desktop\\tools\\bdb.exe",
-    executableExists: false,
-    storage: {
-      defaultPath: "C:\\Users\\Matt\\AppData\\Local\\Board Enthusiasts\\BE Home for Desktop\\tools",
-      overridePath: null,
-      effectivePath: "C:\\Users\\Matt\\AppData\\Local\\Board Enthusiasts\\BE Home for Desktop\\tools",
-      source: "default",
-    },
-    sourcePlan: {
-      manifestSource: "bundled",
-      remoteManifestUrl: "https://example.com/bdb-sources.json",
-      manifestCachePath: null,
-      manifestSchemaVersion: 1,
-      support: {
-        status: "supported",
-        operatingSystem: "windows",
-        architecture: "x86_64",
-        windowsBuild: 26100,
-        platformKey: "windows-x86_64",
-        reason: null,
-        guidance: "This machine matches a Board-published bdb target.",
-      },
-      source: {
-        platformKey: "windows-x86_64",
-        downloadUrl: "https://example.com/bdb.exe",
-      },
-    },
-    validation: {
-      status: "missing",
-      command: "bdb help",
-      exitCode: null,
-      summary: "No managed bdb executable is present yet.",
-      detail: null,
-    },
-  },
+  status: "ready",
+  requiredStep: "workspace",
+  summary: "Board's install tool is ready, so BE Home can open your desktop workspace.",
+  guidance: "You can come back to repair the install tool later if anything changes.",
+  toolState: runnableToolFixture,
   storage: {
     operatingSystem: "windows",
     settingsFilePath:
       "C:\\Users\\Matt\\AppData\\Local\\Board Enthusiasts\\BE Home for Desktop\\settings\\managed-storage.json",
-    bdbTools: {
-      defaultPath: "C:\\Users\\Matt\\AppData\\Local\\Board Enthusiasts\\BE Home for Desktop\\tools",
-      overridePath: null,
-      effectivePath: "C:\\Users\\Matt\\AppData\\Local\\Board Enthusiasts\\BE Home for Desktop\\tools",
-      source: "default",
-    },
+    bdbTools: runnableToolFixture.storage,
     apkLibrary: {
       defaultPath:
         "C:\\Users\\Matt\\AppData\\Local\\Board Enthusiasts\\BE Home for Desktop\\apk-library",
@@ -128,34 +175,25 @@ const missingToolFixture: SetupGateState = {
   defaultScanFolders: ["C:\\Users\\Matt\\Downloads"],
 };
 
-const runnableFixture: SetupGateState = {
-  ...missingToolFixture,
-  status: "ready",
-  requiredStep: "workspace",
-  summary: "Board's install tool is ready, so BE Home can open your desktop workspace.",
-  guidance: "You can come back to repair the install tool later if anything changes.",
-  toolState: {
-    ...missingToolFixture.toolState,
-    status: "runnable",
-    summary: "Board's install tool is ready to use.",
-    executableExists: true,
-    validation: {
-      status: "runnable",
-      command: "bdb help",
-      exitCode: 0,
-      summary: "BE Home could open bdb from its managed tools folder.",
-      detail: null,
-    },
-  },
+const needsSetupFixture: SetupGateState = {
+  ...readySetupFixture,
+  status: "requiresSetup",
+  requiredStep: "toolSetup",
+  summary: "BE Home still needs to download Board's install tool before the workspace can open.",
+  guidance: "Continue setup and BE Home will download Board's bdb into its managed tools folder for you.",
+  toolState: missingToolFixture,
 };
 
 const desktopSettingsFixture: DesktopSettings = {
   operatingSystem: "windows",
   settingsFilePath:
     "C:\\Users\\Matt\\AppData\\Local\\Board Enthusiasts\\BE Home for Desktop\\settings\\managed-storage.json",
-  bdbTools: runnableFixture.storage.bdbTools,
-  apkLibrary: runnableFixture.storage.apkLibrary,
-  bdbExecutablePath: runnableFixture.toolState.executablePath,
+  bdbTools: readySetupFixture.storage.bdbTools,
+  apkLibrary: readySetupFixture.storage.apkLibrary,
+  bdbExecutablePath: runnableToolFixture.executablePath,
+  boardConnection: {
+    pollIntervalSeconds: 5,
+  },
   scanFolders: [
     {
       path: "C:\\Users\\Matt\\Downloads",
@@ -169,21 +207,22 @@ const deviceStatusFixture: DeviceStatusSnapshot = {
   summary: "Board connection looks ready.",
   guidance: "You can keep using the desktop workspace while BE Home refreshes the connection in the background.",
   detail: "Board connected and ready.",
+  boardOsVersion: "1.8.1",
   pollIntervalMs: 5000,
   bdbVersion: {
     status: "available",
     command: "bdb version",
-    value: "bdb 0.19.0",
+    value: "Board OS Version: 1.8.1",
     exitCode: 0,
-    summary: "BE Home is using `bdb 0.19.0`.",
+    summary: "BE Home is using `Board OS Version: 1.8.1`.",
     detail: null,
   },
 };
 
 const installedTitlesFixture: InstalledTitlesSnapshot = {
   status: "ready",
-  summary: "Board reported 1 installed title(s).",
-  guidance: "The current device inventory is ready to review.",
+  summary: "Board reported 1 installed title.",
+  guidance: "The current title list is ready to review.",
   titles: [
     {
       stableId: "package:co.board.luckydice",
@@ -198,7 +237,7 @@ const installedTitlesFixture: InstalledTitlesSnapshot = {
 
 const apkDiscoveryFixture: ApkDiscoverySnapshot = {
   status: "ready",
-  summary: "BE Home found 1 strong Board APK match.",
+  summary: "BE Home found 1 strong Board match.",
   guidance: "Use rescan after you add new downloads to a watched folder.",
   candidates: [
     {
@@ -237,10 +276,20 @@ const managedLibraryFixture: ManagedApkLibrarySnapshot = {
   ],
 };
 
-function installDefaultInvokeHandlers(setupState: SetupGateState = runnableFixture): void {
+function installDefaultInvokeHandlers(options?: {
+  setupState?: SetupGateState;
+  toolState?: BdbToolState;
+  desktopSettings?: DesktopSettings;
+}): void {
+  const setupState = options?.setupState ?? readySetupFixture;
+  const toolState = options?.toolState ?? runnableToolFixture;
+  const desktopSettings = options?.desktopSettings ?? desktopSettingsFixture;
+
   invokeHandlers.current = {
     load_setup_gate_state: () => setupState,
-    load_desktop_settings: () => desktopSettingsFixture,
+    load_bdb_tool_state: () => toolState,
+    refresh_bdb_tool_state: () => toolState,
+    load_desktop_settings: () => desktopSettings,
     load_device_status_snapshot: () => deviceStatusFixture,
     load_installed_titles_snapshot: () => installedTitlesFixture,
     load_apk_discovery_snapshot: () => apkDiscoveryFixture,
@@ -254,11 +303,11 @@ function installDefaultInvokeHandlers(setupState: SetupGateState = runnableFixtu
     exit_application: () => undefined,
     acquire_bdb_tool: () => ({
       outcome: "downloaded",
-      summary: "Downloaded bdb.",
-      guidance: "Ready to go.",
-      toolState: runnableFixture.toolState,
+      summary: "Downloaded the Board Install Tool.",
+      guidance: "The Board Install Tool is ready.",
+      toolState: runnableToolFixture,
     }),
-    save_desktop_settings: () => desktopSettingsFixture,
+    save_desktop_settings: () => desktopSettings,
   };
 }
 
@@ -284,6 +333,7 @@ describe("App", () => {
     onFocusChangedMock.mockResolvedValue(() => {});
     onThemeChangedMock.mockResolvedValue(() => {});
     onCloseRequestedMock.mockResolvedValue(() => {});
+    closeWindowMock.mockResolvedValue(undefined);
 
     installDefaultInvokeHandlers();
   });
@@ -291,32 +341,35 @@ describe("App", () => {
   it("defaults to the main workspace window when the label is missing", async () => {
     render(<App />);
 
-    expect(await screen.findByText("Your desktop install space is ready.")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Device Board connection" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "APK Library Local APKs" }),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Keep your Board installs close by.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Games & Apps/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Installed on Board/i })).toBeInTheDocument();
+    expect(screen.getByLabelText("What this Board status means")).toBeInTheDocument();
   });
 
   it("routes the setup wizard window", async () => {
     currentWindowState.label = "setup-wizard";
-    installDefaultInvokeHandlers(missingToolFixture);
+    installDefaultInvokeHandlers({
+      setupState: needsSetupFixture,
+      toolState: missingToolFixture,
+    });
 
     render(<App />);
 
-    expect(await screen.findByText("Get your install workspace ready")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Cancel" }).length).toBeGreaterThan(0);
+    expect(await screen.findByText("Set up BE Home for Desktop")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Next" })).toBeInTheDocument();
   });
 
   it("allows ready setup-wizard close requests to proceed without interception", async () => {
     currentWindowState.label = "setup-wizard";
-    installDefaultInvokeHandlers(runnableFixture);
+    installDefaultInvokeHandlers({
+      setupState: readySetupFixture,
+      toolState: runnableToolFixture,
+    });
 
     render(<App />);
 
-    await screen.findByRole("button", { name: "Open workspace" });
+    await screen.findByText("Here’s what setup will help you do.");
 
     const closeRequestHandler =
       onCloseRequestedMock.mock.calls[onCloseRequestedMock.mock.calls.length - 1]?.[0];
@@ -336,8 +389,8 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("Keep folders and storage understandable")).toBeInTheDocument();
-    expect(screen.getByText("Board tool")).toBeInTheDocument();
+    expect(await screen.findByText("BE Home for Desktop settings")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Board Install Tool" })).toBeInTheDocument();
   });
 
   it("routes the about window", async () => {
@@ -346,21 +399,20 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByText("BE Home for Desktop")).toBeInTheDocument();
-    expect(
-      screen.getByText(/Board Developer Bridge \(bdb\)/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Board Developer Bridge \(bdb\)/)).toBeInTheDocument();
   });
 
   it("shows the main-window setup blocker and opens the setup wizard", async () => {
-    installDefaultInvokeHandlers(missingToolFixture);
+    installDefaultInvokeHandlers({
+      setupState: needsSetupFixture,
+      toolState: missingToolFixture,
+    });
 
     render(<App />);
 
-    expect(
-      await screen.findByText("Finish setup in the wizard before opening the workspace."),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Finish setup in the Setup Wizard first.")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Open setup wizard" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Setup Wizard" }));
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("open_setup_wizard_window");
@@ -369,11 +421,26 @@ describe("App", () => {
 
   it("refreshes the main workspace before opening it from ready setup", async () => {
     currentWindowState.label = "setup-wizard";
-    installDefaultInvokeHandlers(runnableFixture);
+    installDefaultInvokeHandlers({
+      setupState: readySetupFixture,
+      toolState: runnableToolFixture,
+    });
 
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open workspace" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+    await screen.findByText("Get the Board Install Tool ready.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByText("Choose the folders BE Home should check.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByText("Choose where saved copies should live.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByText("Your setup choices are ready.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Finish" }));
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("emit_settings_updated");
@@ -382,28 +449,47 @@ describe("App", () => {
     });
   });
 
-  it("loads the ready workspace data on the main window", async () => {
+  it("lazy-loads installed titles only after that section is opened", async () => {
     render(<App />);
 
-    expect(
-      await screen.findByText("Keep the latest device check easy to trust."),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Choose a game or app from this computer.")).toBeInTheDocument();
+    expect(invokeMock).not.toHaveBeenCalledWith("load_installed_titles_snapshot");
+
+    fireEvent.click(screen.getByRole("button", { name: /Installed on Board/i }));
 
     await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith("load_device_status_snapshot");
-      expect(invokeMock).toHaveBeenCalledWith("load_desktop_settings");
-      expect(invokeMock).toHaveBeenCalledWith("load_apk_discovery_snapshot");
-      expect(invokeMock).toHaveBeenCalledWith("load_managed_apk_library_snapshot");
       expect(invokeMock).toHaveBeenCalledWith("load_installed_titles_snapshot");
     });
   });
 
-  it("falls back to the unsupported-window panel for unknown labels", async () => {
-    currentWindowState.label = "mystery-window";
+  it("keeps manual choice available even when no scan folders are selected", async () => {
+    installDefaultInvokeHandlers({
+      desktopSettings: {
+        ...desktopSettingsFixture,
+        scanFolders: [],
+      },
+    });
 
     render(<App />);
 
-    expect(await screen.findByText("This desktop window is not recognized.")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Choose Game or App" })).toBeInTheDocument();
+    expect(screen.getByText("Manual choice only")).toBeInTheDocument();
+  });
+
+  it("cancelling setup uses the shared dismiss command", async () => {
+    currentWindowState.label = "setup-wizard";
+    installDefaultInvokeHandlers({
+      setupState: needsSetupFixture,
+      toolState: missingToolFixture,
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("dismiss_setup_wizard_window");
+    });
   });
 
   it("applies the current window theme to the document", async () => {
@@ -420,7 +506,7 @@ describe("App", () => {
   it("keeps Tauri window listeners wired for the routed shell", async () => {
     render(<App />);
 
-    await screen.findByText("Your desktop install space is ready.");
+    await screen.findByText("Keep your Board installs close by.");
 
     expect(getCurrentWindowMock).toHaveBeenCalled();
     expect(onFocusChangedMock).toHaveBeenCalled();

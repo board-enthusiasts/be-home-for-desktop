@@ -474,7 +474,10 @@ mod tests {
             BdbArchitecture, BdbDownloadSource, BdbOperatingSystem, BdbPlatformSupport,
             BdbSourcePlan, BdbSupportStatus,
         },
-        bdb_tool::{BdbRunnableStatus, BdbRunnableValidation, BdbToolState, BdbToolStatus},
+        bdb_tool::{
+            BdbRunnableStatus, BdbRunnableValidation, BdbToolState, BdbToolStatus,
+            BdbToolVersionCheck, BdbToolVersionStatus, BdbUpdateStatus, BdbUpdateStatusKind,
+        },
         device::{BdbVersionDetails, BdbVersionStatus, DeviceStatusKind, DeviceStatusSnapshot},
         storage::{ManagedStorageLocation, ManagedStoragePathSource},
     };
@@ -626,6 +629,7 @@ mod tests {
             summary: "sample device summary".into(),
             guidance: "sample device guidance".into(),
             detail: None,
+            board_os_version: Some("1.8.1".into()),
             poll_interval_ms: 5_000,
             bdb_version: BdbVersionDetails {
                 status: BdbVersionStatus::Available,
@@ -668,8 +672,26 @@ mod tests {
                 source: Some(BdbDownloadSource {
                     platform_key: "linux-x86_64".into(),
                     download_url: "https://example.com/bdb".into(),
+                    version: None,
                 }),
             },
+            version_check: BdbToolVersionCheck {
+                status: BdbToolVersionStatus::Available,
+                command: "/tmp/bdb version".into(),
+                value: Some("Board OS Version: 1.8.1".into()),
+                exit_code: Some(0),
+                summary: "Installed version: Board OS Version: 1.8.1".into(),
+                detail: None,
+            },
+            update_status: BdbUpdateStatus {
+                status: BdbUpdateStatusKind::UpToDate,
+                current_version: Some("Board OS Version: 1.8.1".into()),
+                available_version: Some("Board OS Version: 1.8.1".into()),
+                guidance:
+                    "This Board Install Tool matches the latest version in BE Home's source list."
+                        .into(),
+            },
+            support_request_draft: None,
             validation: BdbRunnableValidation {
                 status: BdbRunnableStatus::Runnable,
                 command: "/tmp/bdb help".into(),

@@ -108,6 +108,13 @@ export function loadBdbToolState(): Promise<BdbToolState> {
 }
 
 /**
+ * Reloads the managed `bdb` tool state after refreshing the remote source manifest.
+ */
+export function refreshBdbToolState(): Promise<BdbToolState> {
+  return invoke<BdbToolState>("refresh_bdb_tool_state");
+}
+
+/**
  * Downloads or repairs the managed `bdb` binary, then returns the updated state.
  */
 export function acquireBdbTool(repair = false): Promise<BdbAcquisitionResult> {

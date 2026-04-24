@@ -11,6 +11,8 @@ const DOWNLOADS_DIRECTORY: &str = "Downloads";
 const SETTINGS_DIRECTORY: &str = "settings";
 const STORAGE_SETTINGS_FILE_NAME: &str = "managed-storage.json";
 const TOOLS_DIRECTORY: &str = "tools";
+const DEFAULT_BOARD_CONNECTION_POLL_INTERVAL_SECONDS: u32 = 5;
+const BOARD_CONNECTION_POLL_INTERVAL_OPTIONS: [u32; 3] = [5, 10, 30];
 
 /// Describes the normalized operating system used for managed-storage defaults.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -55,6 +57,13 @@ pub(crate) struct ConfiguredScanFolder {
     pub(crate) source: ConfiguredScanFolderSource,
 }
 
+/// Describes the persisted Board connection preferences for the desktop app.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BoardConnectionSettings {
+    pub(crate) poll_interval_seconds: u32,
+}
+
 /// Describes the current managed storage configuration for the desktop app.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -74,6 +83,7 @@ pub(crate) struct DesktopSettings {
     pub(crate) bdb_tools: ManagedStorageLocation,
     pub(crate) apk_library: ManagedStorageLocation,
     pub(crate) bdb_executable_path: String,
+    pub(crate) board_connection: BoardConnectionSettings,
     pub(crate) scan_folders: Vec<ConfiguredScanFolder>,
 }
 
@@ -90,6 +100,7 @@ pub(crate) struct ManagedStorageOverridesInput {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DesktopSettingsInput {
     apk_library_override: Option<String>,
+    board_connection_poll_interval_seconds: Option<u32>,
     scan_folder_paths: Vec<String>,
 }
 
@@ -98,6 +109,7 @@ pub(crate) struct DesktopSettingsInput {
 struct PersistedDesktopSettings {
     bdb_tools_override: Option<String>,
     apk_library_override: Option<String>,
+    board_connection_poll_interval_seconds: Option<u32>,
     scan_folder_paths: Option<Vec<String>>,
 }
 
@@ -148,6 +160,11 @@ pub(crate) fn save_desktop_settings(
     let context = current_storage_context()?;
     let mut persisted = load_persisted_settings(&context.settings_file_path)?;
     persisted.apk_library_override = normalize_override(input.apk_library_override)?;
+    persisted.board_connection_poll_interval_seconds =
+        Some(normalize_board_connection_poll_interval(
+            input.board_connection_poll_interval_seconds,
+            persisted.board_connection_poll_interval_seconds,
+        )?);
     persisted.scan_folder_paths = Some(normalize_scan_folder_paths(input.scan_folder_paths)?);
 
     save_persisted_settings(&context.settings_file_path, &persisted)?;
@@ -176,12 +193,15 @@ fn build_desktop_settings(
     persisted: &PersistedDesktopSettings,
 ) -> DesktopSettings {
     let managed_storage = build_managed_storage_settings(context, persisted);
-    DesktopSettings {
+        DesktopSettings {
         operating_system: managed_storage.operating_system,
         settings_file_path: managed_storage.settings_file_path.clone(),
         bdb_tools: managed_storage.bdb_tools.clone(),
         apk_library: managed_storage.apk_library.clone(),
         bdb_executable_path: resolve_bdb_executable_path(&managed_storage.bdb_tools),
+        board_connection: BoardConnectionSettings {
+            poll_interval_seconds: resolve_board_connection_poll_interval_seconds(persisted),
+        },
         scan_folders: build_scan_folders(context, persisted),
     }
 }
@@ -261,6 +281,37 @@ fn normalize_loaded_scan_folder_paths(values: &[String]) -> Vec<String> {
     }
 
     normalized
+}
+
+fn resolve_board_connection_poll_interval_seconds(
+    persisted: &PersistedDesktopSettings,
+) -> u32 {
+    persisted
+        .board_connection_poll_interval_seconds
+        .filter(|value| BOARD_CONNECTION_POLL_INTERVAL_OPTIONS.contains(value))
+        .unwrap_or(DEFAULT_BOARD_CONNECTION_POLL_INTERVAL_SECONDS)
+}
+
+fn normalize_board_connection_poll_interval(
+    requested: Option<u32>,
+    current: Option<u32>,
+) -> Result<u32, String> {
+    let poll_interval = requested
+        .or(current)
+        .unwrap_or(DEFAULT_BOARD_CONNECTION_POLL_INTERVAL_SECONDS);
+
+    if BOARD_CONNECTION_POLL_INTERVAL_OPTIONS.contains(&poll_interval) {
+        return Ok(poll_interval);
+    }
+
+    Err(format!(
+        "The desktop app only supports Board connection refresh intervals of {} seconds.",
+        BOARD_CONNECTION_POLL_INTERVAL_OPTIONS
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
 }
 
 fn current_storage_context() -> Result<ManagedStorageContext, String> {
@@ -489,7 +540,8 @@ mod tests {
         build_desktop_settings, build_managed_storage_settings,
         current_storage_context_from_environment, load_persisted_settings, normalize_override,
         normalize_scan_folder_paths, save_desktop_settings, save_managed_storage_settings,
-        save_persisted_settings, DesktopSettingsInput, ManagedStorageContext,
+        save_persisted_settings, DesktopSettingsInput,
+        DEFAULT_BOARD_CONNECTION_POLL_INTERVAL_SECONDS, ManagedStorageContext,
         ManagedStorageOverridesInput, PersistedDesktopSettings, StorageOperatingSystem,
     };
     use std::collections::BTreeMap;
@@ -651,6 +703,7 @@ mod tests {
         let persisted = PersistedDesktopSettings {
             bdb_tools_override: Some(sample_tools_override_path()),
             apk_library_override: Some(sample_apk_library_override_path()),
+            board_connection_poll_interval_seconds: Some(30),
             scan_folder_paths: Some(vec![sample_scan_folder_path()]),
         };
 
@@ -685,6 +738,7 @@ mod tests {
         let persisted = PersistedDesktopSettings {
             bdb_tools_override: Some("relative/tools".into()),
             apk_library_override: Some(sample_apk_library_override_path()),
+            board_connection_poll_interval_seconds: Some(12),
             scan_folder_paths: Some(vec!["relative/Downloads".into()]),
         };
 
@@ -724,6 +778,7 @@ mod tests {
                 .and_then(|value| value.as_str())
                 .expect("source should serialize")
         );
+        assert_eq!(DEFAULT_BOARD_CONNECTION_POLL_INTERVAL_SECONDS, settings.board_connection.poll_interval_seconds);
     }
 
     #[test]
@@ -746,6 +801,7 @@ mod tests {
 
         let result = save_desktop_settings(DesktopSettingsInput {
             apk_library_override: Some(sample_apk_library_override_path()),
+            board_connection_poll_interval_seconds: Some(10),
             scan_folder_paths: vec![sample_scan_folder_path()],
         })
         .expect("desktop settings should save");
@@ -761,6 +817,7 @@ mod tests {
             Some(sample_apk_library_override_path().as_str()),
             result.apk_library.override_path.as_deref()
         );
+        assert_eq!(10, result.board_connection.poll_interval_seconds);
         assert!(PathBuf::from(&result.settings_file_path).exists());
     }
 
@@ -791,6 +848,7 @@ mod tests {
             &PersistedDesktopSettings {
                 bdb_tools_override: None,
                 apk_library_override: None,
+                board_connection_poll_interval_seconds: None,
                 scan_folder_paths: Some(vec![sample_scan_folder_path()]),
             },
         )

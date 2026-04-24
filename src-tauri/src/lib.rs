@@ -69,6 +69,11 @@ fn load_bdb_tool_state() -> Result<bdb_tool::BdbToolState, String> {
 }
 
 #[tauri::command]
+fn refresh_bdb_tool_state() -> Result<bdb_tool::BdbToolState, String> {
+    bdb_tool::load_current_bdb_tool_state_with_remote_refresh(true)
+}
+
+#[tauri::command]
 fn acquire_bdb_tool(repair: bool) -> Result<bdb_tool::BdbAcquisitionResult, String> {
     bdb_tool::acquire_current_bdb_tool(repair)
 }
@@ -174,6 +179,7 @@ pub fn run() {
             launch_installed_title_on_board,
             load_bdb_source_plan,
             load_bdb_tool_state,
+            refresh_bdb_tool_state,
             acquire_bdb_tool,
             load_device_status_snapshot,
             load_installed_titles_snapshot,
@@ -234,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn bdb_source_plan_uses_the_bundled_manifest_contract() {
+    fn bdb_source_plan_uses_the_supported_manifest_contract() {
         let plan = super::load_bdb_source_plan();
         let serialized = serde_json::to_value(plan).expect("bdb source plan should serialize");
 
@@ -242,12 +248,10 @@ mod tests {
             .get("manifestSource")
             .and_then(|value| value.as_str())
             .is_some_and(|value| matches!(value, "bundled" | "cached" | "remote")));
-        assert_eq!(
-            Some(1),
-            serialized
-                .get("manifestSchemaVersion")
-                .and_then(|value| value.as_u64())
-        );
+        assert!(serialized
+            .get("manifestSchemaVersion")
+            .and_then(|value| value.as_u64())
+            .is_some_and(|value| matches!(value, 1 | 2)));
         assert!(serialized
             .get("remoteManifestUrl")
             .and_then(|value| value.as_str())

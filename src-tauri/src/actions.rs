@@ -1138,8 +1138,26 @@ mod tests {
                 source: Some(bdb::BdbDownloadSource {
                     platform_key: "windows-x86_64".into(),
                     download_url: "https://example.com/bdb.exe".into(),
+                    version: None,
                 }),
             },
+            version_check: bdb_tool::BdbToolVersionCheck {
+                status: bdb_tool::BdbToolVersionStatus::Available,
+                command: "bdb version".into(),
+                value: Some("Board OS Version: 1.8.1".into()),
+                exit_code: Some(0),
+                summary: "Installed version: Board OS Version: 1.8.1".into(),
+                detail: None,
+            },
+            update_status: bdb_tool::BdbUpdateStatus {
+                status: bdb_tool::BdbUpdateStatusKind::UpToDate,
+                current_version: Some("Board OS Version: 1.8.1".into()),
+                available_version: Some("Board OS Version: 1.8.1".into()),
+                guidance:
+                    "This Board Install Tool matches the latest version in BE Home's source list."
+                        .into(),
+            },
+            support_request_draft: None,
             validation: bdb_tool::BdbRunnableValidation {
                 status: bdb_tool::BdbRunnableStatus::Runnable,
                 command: "bdb help".into(),
@@ -1156,6 +1174,7 @@ mod tests {
             summary: "Board connection looks ready.".into(),
             guidance: "Refresh the connection when you need to.".into(),
             detail: None,
+            board_os_version: Some("1.8.1".into()),
             poll_interval_ms: 5_000,
             bdb_version: device::BdbVersionDetails {
                 status: device::BdbVersionStatus::Available,

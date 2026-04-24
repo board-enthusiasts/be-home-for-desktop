@@ -1,8 +1,17 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "platforms": {
-    "linux-x86_64": "https://dev.board.fun/downloads/bdb/linux/bdb",
-    "macos-universal": "https://dev.board.fun/downloads/bdb/macos-universal/bdb",
-    "windows-x86_64": "https://dev.board.fun/downloads/bdb/windows/bdb.exe"
+    "linux-x86_64": {
+      "downloadUrl": "https://dev.board.fun/downloads/bdb/linux/bdb",
+      "version": "Board OS Version: 1.8.1"
+    },
+    "macos-universal": {
+      "downloadUrl": "https://dev.board.fun/downloads/bdb/macos-universal/bdb",
+      "version": "Board OS Version: 1.8.1"
+    },
+    "windows-x86_64": {
+      "downloadUrl": "https://dev.board.fun/downloads/bdb/windows/bdb.exe",
+      "version": "Board OS Version: 1.8.1"
+    }
   }
 }
