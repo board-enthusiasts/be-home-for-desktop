@@ -4,74 +4,40 @@ This guide explains the maintained local workflow for `be-home-for-desktop`.
 
 ## Prerequisites
 
-- Node.js and npm
-- Rust toolchain (`rustup`, `cargo`, `rustc`)
-- The platform-specific prerequisites required by Tauri for your OS
+- Unity `6000.4.0f1`
+- Python for the root developer automation
+- The root workspace with `unity-shared/` initialized beside this Unity project
 
-## Repo-Local Commands
-
-Install dependencies:
+If Unity is not installed in the standard Unity Hub location, set one of these environment variables to the Unity editor executable:
 
 ```bash
-npm install
+BE_UNITY_EDITOR_PATH=/path/to/Unity
+UNITY_EDITOR_PATH=/path/to/Unity
 ```
 
-Run the renderer-only Vite dev server:
+## Root Commands
+
+Run desktop EditMode and PlayMode tests:
 
 ```bash
-npm run dev
+python ./scripts/dev.py desktop test
 ```
 
-Run the full Tauri desktop shell:
+Build the Windows standalone player:
 
 ```bash
-npm run tauri dev
+python ./scripts/dev.py desktop build
 ```
 
-Build the renderer bundle:
+Open the Unity editor for local desktop work:
 
 ```bash
-npm run build
-```
-
-Run renderer tests only:
-
-```bash
-npm run test:renderer
-```
-
-Run Rust host tests only:
-
-```bash
-npm run test:host
-```
-
-Run the maintained desktop test suite:
-
-```bash
-npm run test
-```
-
-## What Works Before Rust Is Installed
-
-If Rust tooling is not available yet, these commands still work for renderer-only work:
-
-```bash
-npm install
-npm run dev
-npm run test:renderer
-```
-
-These commands require the Rust toolchain because they invoke the Tauri host or Cargo:
-
-```bash
-npm run tauri dev
-npm run test:host
-npm run test
+python ./scripts/dev.py desktop --local-only
 ```
 
 ## Contributor Notes
 
-- Keep the repo-local `npm` scripts current and discoverable.
-- Prefer updating this guide when the supported local workflow changes.
+- Keep root automation current when Unity project workflows change.
 - Keep player-facing copy in runtime code and contributor-facing guidance in `docs/`.
+- Keep shared Unity code in `unity-shared/` only when both Unity apps need it.
+- Verify USS property additions against the Unity `6000.4` UI Toolkit USS reference before committing them.

@@ -2,13 +2,13 @@
 
 This document captures the current operational requirements for shipping public BE Home for Desktop builds with a deliberate trust story.
 
-The first public release baseline for Epic 1 is:
+The target public release baseline is:
 
 - Windows: NSIS setup executable (`-setup.exe`)
 - macOS: signed and notarized DMG
 - Linux: AppImage plus published SHA-256 checksums
 
-Release automation should build each bundle type explicitly. Do not rely on Tauri's broad `"all"` bundle target for public release jobs.
+Release automation should build each platform output explicitly after the Unity packaging path is finalized.
 
 ## Trust Boundary
 
@@ -22,7 +22,6 @@ Primary release path: Azure Artifact Signing (formerly Trusted Signing) for publ
 
 Why this is the maintained default:
 
-- Tauri documents Azure-backed signing integration for Windows bundles via `signCommand`
 - Microsoft Learn currently recommends Azure Artifact Signing for non-Store distribution
 - it avoids shipping a private certificate file into CI and fits GitHub Actions better than manual token handling
 
@@ -57,8 +56,6 @@ Public macOS distribution requires Apple Developer signing plus notarization.
 
 Operational notes:
 
-- Tauri documents that macOS code signing requires an Apple Developer account and an Apple device for signing workflows
-- Tauri also notes that the free Apple Developer plan is suitable for testing only and does not allow notarized public distribution
 - Apple requires Developer ID signing for software distributed outside the Mac App Store
 - Apple notarization requires `notarytool` or a newer Xcode-based workflow; Apple no longer accepts `altool` submissions as of November 1, 2023
 - Apple requires hardened runtime, valid code signatures, secure timestamps, and Developer ID certificates for notarized outside-the-Store distribution
@@ -124,12 +121,6 @@ The repo can automate build steps before these prerequisites exist, but public r
 
 ## References
 
-- [Tauri Windows Code Signing](https://tauri.app/distribute/sign/windows/)
-- [Tauri macOS Code Signing](https://tauri.app/distribute/sign/macos/)
-- [Tauri Windows Installer](https://tauri.app/distribute/windows-installer/)
-- [Tauri DMG Distribution](https://v2.tauri.app/distribute/dmg/)
-- [Tauri AppImage Distribution](https://v2.tauri.app/distribute/appimage/)
-- [Tauri Configuration Reference](https://v2.tauri.app/reference/config/)
 - [Microsoft Learn: Code signing options for Windows app developers](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options)
 - [Apple Developer: Notarizing macOS software before distribution](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)
 - [Apple Developer: Signing Mac Software with Developer ID](https://developer.apple.com/developer-id/)

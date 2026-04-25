@@ -5,61 +5,79 @@ on:
   workflow_dispatch:
 
 jobs:
-  validate:
-    name: Validate (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-24.04
-          - macos-15
-          - windows-2025
+  unity-project-guard:
+    name: Unity Project Guard
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Install Linux system dependencies
-        if: runner.os == 'Linux'
+      - name: Validate Unity cutover shape
+        shell: python
         run: |
-          sudo apt update
-          sudo apt install -y \
-            libwebkit2gtk-4.1-dev \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libxdo-dev \
-            libssl-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev
+          from pathlib import Path
+          import re
+          import sys
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
+          required = [
+              Path("Assets/BEHomeDesktop/Runtime/BE.Home.Desktop.asmdef"),
+              Path("Assets/BEHomeDesktop/Runtime/Resources/DesktopApp.uxml"),
+              Path("Assets/BEHomeDesktop/Runtime/Resources/DesktopApp.uss"),
+              Path("Packages/manifest.json"),
+              Path("ProjectSettings/ProjectVersion.txt"),
+          ]
+          missing = [str(path) for path in required if not path.exists()]
+          if missing:
+              print("Missing Unity project files:")
+              print("\n".join(missing))
+              sys.exit(1)
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+          stale = [path for path in (Path("src"), Path("src-tauri"), Path("package.json"), Path("vite.config.ts")) if path.exists()]
+          if stale:
+              print("Found stale WebView-era files:")
+              print("\n".join(str(path) for path in stale))
+              sys.exit(1)
 
-      - name: Cache Rust build outputs
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
+          manifest = Path("Packages/manifest.json").read_text(encoding="utf-8")
+          if "com.be.unity.shared" not in manifest:
+              print("Packages/manifest.json must reference com.be.unity.shared.")
+              sys.exit(1)
 
-      - name: Install npm dependencies
-        run: npm ci
-
-      - name: Typecheck renderer
-        run: npm run typecheck
-
-      - name: Build renderer bundle
-        run: npm run build
-
-      - name: Run renderer tests
-        run: npm run test:renderer
-
-      - name: Run host tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+          allowed = {
+              "align-content", "align-items", "align-self", "all", "aspect-ratio", "background-color",
+              "background-image", "background-position", "background-position-x", "background-position-y",
+              "background-repeat", "background-size", "border-bottom-color", "border-bottom-left-radius",
+              "border-bottom-right-radius", "border-bottom-width", "border-color", "border-left-color",
+              "border-left-width", "border-radius", "border-right-color", "border-right-width",
+              "border-top-color", "border-top-left-radius", "border-top-right-radius", "border-top-width",
+              "border-width", "bottom", "color", "cursor", "display", "filter", "flex", "flex-basis",
+              "flex-direction", "flex-grow", "flex-shrink", "flex-wrap", "font-size", "height",
+              "justify-content", "left", "letter-spacing", "margin", "margin-bottom", "margin-left",
+              "margin-right", "margin-top", "max-height", "max-width", "min-height", "min-width",
+              "opacity", "overflow", "padding", "padding-bottom", "padding-left", "padding-right",
+              "padding-top", "position", "right", "rotate", "scale", "text-overflow", "text-shadow",
+              "top", "transform-origin", "transition", "transition-delay", "transition-duration",
+              "transition-property", "transition-timing-function", "translate",
+              "-unity-background-image-tint-color", "-unity-background-scale-mode",
+              "-unity-editor-text-rendering-mode", "-unity-font", "-unity-font-definition",
+              "-unity-font-style", "-unity-material", "-unity-overflow-clip-box",
+              "-unity-paragraph-spacing", "-unity-slice-bottom", "-unity-slice-left",
+              "-unity-slice-right", "-unity-slice-scale", "-unity-slice-top", "-unity-slice-type",
+              "-unity-text-align", "-unity-text-auto-size", "-unity-text-generator",
+              "-unity-text-outline", "-unity-text-outline-color", "-unity-text-outline-width",
+              "-unity-text-overflow-position", "visibility", "white-space", "width", "word-spacing",
+          }
+          property_pattern = re.compile(r"(?:^|[;{])\s*([A-Za-z_-][A-Za-z0-9_-]*)\s*:", re.MULTILINE)
+          comment_pattern = re.compile(r"/\*.*?\*/", re.DOTALL)
+          unsupported = []
+          for path in Path("Assets").glob("**/*.uss"):
+              content = comment_pattern.sub("", path.read_text(encoding="utf-8"))
+              for match in property_pattern.finditer(content):
+                  name = match.group(1)
+                  if not name.startswith("--") and name not in allowed:
+                      unsupported.append(f"{path}: {name}")
+          if unsupported:
+              print("Unsupported Unity USS properties:")
+              print("\n".join(unsupported))
+              sys.exit(1)

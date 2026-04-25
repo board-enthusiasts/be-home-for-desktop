@@ -1,0 +1,58 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements">
+    <ui:VisualElement name="app-root" class="be-screen desktop-root">
+        <ui:VisualElement class="desktop-toolbar be-row">
+            <ui:Label text="BE Home for Desktop" class="desktop-title" />
+            <ui:VisualElement class="desktop-toolbar-actions be-row">
+                <ui:Button name="open-settings-button" text="Settings" class="be-button-secondary desktop-button" />
+                <ui:Button name="open-about-button" text="About" class="be-button-secondary desktop-button" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+        <ui:VisualElement name="setup-view" class="desktop-view be-column">
+            <ui:VisualElement class="be-panel desktop-panel desktop-hero">
+                <ui:Label text="Set up BE Home for Desktop" class="desktop-heading" />
+                <ui:Label text="Choose the local bdb executable and folders BE Home should scan for Board APKs." class="desktop-copy be-text-muted" />
+                <ui:TextField name="bdb-path-field" label="bdb path" class="desktop-field" />
+                <ui:TextField name="library-path-field" label="Saved library" class="desktop-field" />
+                <ui:TextField name="scan-folders-field" label="Scan folders" multiline="true" class="desktop-field desktop-field-tall" />
+                <ui:Button name="finish-setup-button" text="Finish" class="be-button-primary desktop-button" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+        <ui:VisualElement name="workspace-view" class="desktop-view be-column">
+            <ui:VisualElement class="desktop-status-bar be-row">
+                <ui:Label name="board-status-label" text="Checking Board..." class="desktop-pill" />
+                <ui:Label name="board-os-label" text="Board OS Unavailable" class="desktop-pill" />
+            </ui:VisualElement>
+            <ui:VisualElement class="desktop-content be-row">
+                <ui:VisualElement class="be-panel desktop-sidebar">
+                    <ui:Label text="Games &amp; Apps" class="desktop-section-title" />
+                    <ui:Button name="choose-apk-button" text="Choose Game or App" class="be-button-primary desktop-button" />
+                    <ui:Button name="add-folder-button" text="Add Folder" class="be-button-secondary desktop-button" />
+                    <ui:Button name="rescan-button" text="Rescan" class="be-button-secondary desktop-button" />
+                    <ui:Button name="refresh-status-button" text="Refresh Board" class="be-button-secondary desktop-button" />
+                </ui:VisualElement>
+                <ui:VisualElement class="be-panel desktop-main-panel">
+                    <ui:Label text="Local APKs" class="desktop-section-title" />
+                    <ui:Label name="apk-list-label" text="No APKs found yet." class="desktop-list-label be-text-muted" />
+                </ui:VisualElement>
+            </ui:VisualElement>
+        </ui:VisualElement>
+        <ui:VisualElement name="settings-view" class="desktop-view be-column">
+            <ui:VisualElement class="be-panel desktop-panel">
+                <ui:Label text="Settings" class="desktop-heading" />
+                <ui:TextField name="settings-bdb-path-field" label="bdb path" class="desktop-field" />
+                <ui:TextField name="settings-library-path-field" label="Saved library" class="desktop-field" />
+                <ui:TextField name="settings-scan-folders-field" label="Scan folders" multiline="true" class="desktop-field desktop-field-tall" />
+                <ui:Button name="close-settings-button" text="Save Settings" class="be-button-primary desktop-button" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+        <ui:VisualElement name="about-modal" class="desktop-modal">
+            <ui:VisualElement class="be-panel desktop-about">
+                <ui:Label text="BE Home for Desktop" class="desktop-heading" />
+                <ui:Label text="A Unity UI Toolkit desktop utility for installing and managing indie Board titles without terminal steps." class="desktop-copy be-text-muted" />
+                <ui:Label text="Version 0.1.0" class="desktop-copy" />
+                <ui:Button name="close-about-button" text="Close" class="be-button-primary desktop-button" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+    </ui:VisualElement>
+</ui:UXML>
+

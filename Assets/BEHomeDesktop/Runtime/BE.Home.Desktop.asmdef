@@ -1,0 +1,17 @@
+{
+  "name": "BE.Home.Desktop",
+  "rootNamespace": "BE.Home.Desktop",
+  "references": [
+    "BE.Unity.Shared"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}
+

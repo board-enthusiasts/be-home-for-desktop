@@ -34,20 +34,21 @@ The MVP will focus on the minimum complete player experience needed to:
 
 ## Planned Technology Choice
 
-### Desktop Shell
+### Desktop Runtime
 
-- Tauri
+- Unity `6000.4.0f1`
+- UI Toolkit
 
-### Renderer
+### Shared Unity Package
 
-- React + TypeScript
-- Vite
+- Shared reusable Unity code lives in `com.be.unity.shared` from the root `unity-shared/` submodule.
+- Shared code must stay platform-neutral and avoid Board SDK, Android-only, and desktop-only `bdb` dependencies.
 
 ### Why This Stack
 
-- Tauri fits the small-footprint utility shape better than a larger desktop runtime.
-- The React + TypeScript renderer aligns with the established Board Enthusiasts frontend stack and team familiarity.
-- A desktop shell is required because browser-only SPA capabilities are not sufficient for reliable native binary execution, local folder scanning, controlled app storage, and USB-adjacent command orchestration.
+- Unity is now the selected runtime for both `be-home` and `be-home-for-desktop`, which lets the products share UI Toolkit theme primitives, contracts, and common helpers without WebView-rendered UI.
+- UI Toolkit keeps setup, settings, and About flows inside a single native Unity app window for v1.
+- A native desktop runtime is required because browser-only SPA capabilities are not sufficient for reliable native binary execution, local folder scanning, controlled app storage, and USB-adjacent command orchestration.
 
 ## MVP Experience
 
