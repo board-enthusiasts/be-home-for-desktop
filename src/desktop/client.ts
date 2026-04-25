@@ -170,6 +170,13 @@ export function saveDesktopSettings(input: DesktopSettingsInput): Promise<Deskto
 }
 
 /**
+ * Marks the setup wizard as complete for future app launches.
+ */
+export function completeSetupWizard(): Promise<void> {
+  return invoke<void>("complete_setup_wizard");
+}
+
+/**
  * Opens or focuses the native setup wizard window.
  */
 export function openSetupWizardWindow(): Promise<void> {
@@ -191,6 +198,13 @@ export function openAboutWindow(): Promise<void> {
 }
 
 /**
+ * Closes the native About window if it is open.
+ */
+export function closeAboutWindow(): Promise<void> {
+  return invoke<void>("close_about_window");
+}
+
+/**
  * Shows the main workspace window after setup is complete.
  */
 export function showMainWorkspaceWindow(): Promise<void> {
@@ -202,6 +216,13 @@ export function showMainWorkspaceWindow(): Promise<void> {
  */
 export function dismissSetupWizardWindow(): Promise<void> {
   return invoke<void>("dismiss_setup_wizard_window");
+}
+
+/**
+ * Completes setup, closes the wizard, and opens the main workspace in one native handoff.
+ */
+export function finishSetupWizardWindow(): Promise<void> {
+  return invoke<void>("finish_setup_wizard_window");
 }
 
 /**

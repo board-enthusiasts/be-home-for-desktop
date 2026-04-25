@@ -1,12 +1,13 @@
-use crate::{apk, bdb_tool, device};
+use crate::{apk, bdb_tool, device, process_runner};
 use serde::Serialize;
-use std::io;
 use std::path::Path;
-use std::process::Command;
+use std::time::Duration;
 
 const BDB_INSTALL_ARGUMENT: &str = "install";
 const BDB_LAUNCH_ARGUMENT: &str = "launch";
 const BDB_REMOVE_ARGUMENT: &str = "remove";
+const BDB_INSTALL_TIMEOUT_SECONDS: u64 = 300;
+const BDB_ACTION_TIMEOUT_SECONDS: u64 = 30;
 
 /// Describes whether an install attempt completed successfully.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -127,15 +128,14 @@ impl ProcessRunner for CommandProcessRunner {
         executable_path: &Path,
         args: &[&str],
     ) -> Result<ProcessRunOutput, ProcessRunFailure> {
-        let output = Command::new(executable_path)
-            .args(args)
-            .output()
-            .map_err(classify_process_failure)?;
+        let output =
+            process_runner::run_with_timeout(executable_path, args, timeout_for_args(args))
+                .map_err(map_process_failure)?;
 
         Ok(ProcessRunOutput {
-            exit_code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            exit_code: output.exit_code,
+            stdout: output.stdout,
+            stderr: output.stderr,
         })
     }
 }
@@ -161,10 +161,7 @@ pub(crate) fn uninstall_installed_title_from_board(
     input: UninstallInstalledTitleInput,
 ) -> Result<UninstallInstalledTitleResult, String> {
     let package_name = normalize_package_name(&input.package_name)?;
-    let display_name = normalize_display_name(
-        input.display_name.as_deref(),
-        &package_name,
-    );
+    let display_name = normalize_display_name(input.display_name.as_deref(), &package_name);
     let tool_state = bdb_tool::load_current_bdb_tool_state()?;
     let device_status = device::load_current_device_status_snapshot()?;
 
@@ -260,8 +257,7 @@ fn install_apk_with_runner<P: ProcessRunner>(
             ProcessRunFailureKind::Other => InstallApkResult {
                 status: InstallApkStatus::Failed,
                 summary: format!("BE Home couldn't finish installing {file_name} on Board yet."),
-                guidance:
-                    "Keep Board connected, then try the install again in a moment.".into(),
+                guidance: "Keep Board connected, then try the install again in a moment.".into(),
                 detail: Some("The install command could not finish cleanly.".into()),
                 command,
                 exit_code: None,
@@ -299,12 +295,18 @@ fn normalize_install_output(
                 .into(),
             Some("Board reported that the app is already present.".into()),
         )
-    } else if contains_any(&normalized_output, &["not enough space", "insufficient storage", "no space"]) {
+    } else if contains_any(
+        &normalized_output,
+        &["not enough space", "insufficient storage", "no space"],
+    ) {
         (
             "Board says it does not have enough storage space for this install right now.".into(),
             Some("Free up space on Board, then try the install again.".into()),
         )
-    } else if contains_any(&normalized_output, &["invalid", "corrupt", "parse", "manifest"]) {
+    } else if contains_any(
+        &normalized_output,
+        &["invalid", "corrupt", "parse", "manifest"],
+    ) {
         (
             "Board did not accept this APK as a valid install package.".into(),
             Some("Try another copy of the APK if you have one.".into()),
@@ -340,7 +342,11 @@ fn uninstall_installed_title_with_runner<P: ProcessRunner>(
     display_name: &str,
     runner: &P,
 ) -> UninstallInstalledTitleResult {
-    let command = build_command_string(&tool_state.executable_path, BDB_REMOVE_ARGUMENT, package_name);
+    let command = build_command_string(
+        &tool_state.executable_path,
+        BDB_REMOVE_ARGUMENT,
+        package_name,
+    );
 
     if tool_state.status != bdb_tool::BdbToolStatus::Runnable {
         return blocked_uninstall_result(
@@ -389,9 +395,8 @@ fn uninstall_installed_title_with_runner<P: ProcessRunner>(
             ProcessRunFailureKind::Other => UninstallInstalledTitleResult {
                 status: UninstallInstalledTitleStatus::Failed,
                 summary: format!("BE Home couldn't finish removing {display_name} from Board yet."),
-                guidance:
-                    "Keep Board connected, then try removing the title again in a moment."
-                        .into(),
+                guidance: "Keep Board connected, then try removing the title again in a moment."
+                    .into(),
                 detail: Some("The uninstall command could not finish cleanly.".into()),
                 command,
                 exit_code: None,
@@ -458,7 +463,11 @@ fn launch_installed_title_with_runner<P: ProcessRunner>(
     display_name: &str,
     runner: &P,
 ) -> LaunchInstalledTitleResult {
-    let command = build_command_string(&tool_state.executable_path, BDB_LAUNCH_ARGUMENT, package_name);
+    let command = build_command_string(
+        &tool_state.executable_path,
+        BDB_LAUNCH_ARGUMENT,
+        package_name,
+    );
 
     if tool_state.status != bdb_tool::BdbToolStatus::Runnable {
         return blocked_launch_result(
@@ -507,8 +516,8 @@ fn launch_installed_title_with_runner<P: ProcessRunner>(
             ProcessRunFailureKind::Other => LaunchInstalledTitleResult {
                 status: LaunchInstalledTitleStatus::Failed,
                 summary: format!("BE Home couldn't finish launching {display_name} on Board yet."),
-                guidance:
-                    "Keep Board connected, then try opening the title again in a moment.".into(),
+                guidance: "Keep Board connected, then try opening the title again in a moment."
+                    .into(),
                 detail: Some("The launch command could not finish cleanly.".into()),
                 command,
                 exit_code: None,
@@ -635,11 +644,9 @@ fn tool_guidance_for_install(
             "Repair bdb from settings before trying this install again.".into(),
             Some(tool_state.guidance.clone()),
         ),
-        bdb_tool::BdbToolStatus::Runnable => (
-            "ready",
-            "Board's install tool is ready.".into(),
-            None,
-        ),
+        bdb_tool::BdbToolStatus::Runnable => {
+            ("ready", "Board's install tool is ready.".into(), None)
+        }
     }
 }
 
@@ -672,11 +679,7 @@ fn device_guidance_for_install(
             "This computer is outside Board's current support for desktop installs.".into(),
             Some(device_status.guidance.clone()),
         ),
-        device::DeviceStatusKind::BoardConnected => (
-            "ready",
-            "Board is connected.".into(),
-            None,
-        ),
+        device::DeviceStatusKind::BoardConnected => ("ready", "Board is connected.".into(), None),
     }
 }
 
@@ -771,7 +774,10 @@ fn build_command_string(executable_path: &str, command_name: &str, target: &str)
 fn normalize_package_name(value: &str) -> Result<String, String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return Err("Choose an installed title with a package name before asking BE Home to remove it.".into());
+        return Err(
+            "Choose an installed title with a package name before asking BE Home to remove it."
+                .into(),
+        );
     }
 
     Ok(trimmed.to_owned())
@@ -793,16 +799,29 @@ fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-fn classify_process_failure(error: io::Error) -> ProcessRunFailure {
-    let kind = match error.kind() {
-        io::ErrorKind::PermissionDenied => ProcessRunFailureKind::PermissionDenied,
-        io::ErrorKind::NotFound => ProcessRunFailureKind::NotFound,
-        _ => ProcessRunFailureKind::Other,
+fn timeout_for_args(args: &[&str]) -> Duration {
+    match args.first().copied() {
+        Some(BDB_INSTALL_ARGUMENT) => Duration::from_secs(BDB_INSTALL_TIMEOUT_SECONDS),
+        Some(BDB_LAUNCH_ARGUMENT) | Some(BDB_REMOVE_ARGUMENT) | None => {
+            Duration::from_secs(BDB_ACTION_TIMEOUT_SECONDS)
+        }
+        Some(_) => Duration::from_secs(BDB_ACTION_TIMEOUT_SECONDS),
+    }
+}
+
+fn map_process_failure(failure: process_runner::ProcessCommandFailure) -> ProcessRunFailure {
+    let kind = match failure.kind {
+        process_runner::ProcessCommandFailureKind::PermissionDenied => {
+            ProcessRunFailureKind::PermissionDenied
+        }
+        process_runner::ProcessCommandFailureKind::NotFound => ProcessRunFailureKind::NotFound,
+        process_runner::ProcessCommandFailureKind::TimedOut
+        | process_runner::ProcessCommandFailureKind::Other => ProcessRunFailureKind::Other,
     };
 
     ProcessRunFailure {
         kind,
-        detail: error.to_string(),
+        detail: failure.detail,
     }
 }
 

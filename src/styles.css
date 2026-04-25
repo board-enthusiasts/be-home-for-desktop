@@ -30,6 +30,12 @@
     --desktop-surface-muted: rgba(255, 255, 255, 0.03);
     --desktop-border: rgba(118, 255, 170, 0.18);
     --desktop-border-strong: rgba(118, 255, 170, 0.34);
+    --desktop-window-border: #37644f;
+    --desktop-titlebar-bg: #17141c;
+    --desktop-titlebar-border: #2e4b3e;
+    --desktop-titlebar-button-hover: #24202b;
+    --desktop-menu-bg: #1f1b26;
+    --desktop-menu-item-hover: #2a2531;
     --desktop-text: #f7f2e8;
     --desktop-text-muted: rgba(223, 229, 240, 0.82);
     --desktop-text-soft: rgba(223, 229, 240, 0.68);
@@ -45,6 +51,12 @@
     --desktop-surface-muted: rgba(12, 31, 32, 0.04);
     --desktop-border: rgba(36, 104, 83, 0.18);
     --desktop-border-strong: rgba(36, 104, 83, 0.28);
+    --desktop-window-border: #88ab9f;
+    --desktop-titlebar-bg: #ffffff;
+    --desktop-titlebar-border: #c4d7d1;
+    --desktop-titlebar-button-hover: #e9f1f2;
+    --desktop-menu-bg: #ffffff;
+    --desktop-menu-item-hover: #eef4f6;
     --desktop-text: #142125;
     --desktop-text-muted: rgba(20, 33, 37, 0.82);
     --desktop-text-soft: rgba(20, 33, 37, 0.62);
@@ -120,14 +132,6 @@
 
   .hero-panel {
     padding: 1.75rem;
-  }
-
-  .eyebrow {
-    font-size: 0.75rem;
-    font-weight: 700;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    color: var(--desktop-text-soft);
   }
 
   .panel h2,

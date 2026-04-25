@@ -359,9 +359,8 @@ export default function SettingsWindowApp() {
   if (windowError !== null) {
     return (
       <main className="page-shell desktop-shell desktop-utility-window">
-        <section className="page-grid narrow">
-          <section className="panel desktop-state-card" aria-live="polite">
-            <div className="eyebrow">Settings</div>
+        <section className="desktop-utility-grid">
+          <section className="desktop-state-view" aria-live="polite">
             <h2>Please close BE Home for Desktop and try again.</h2>
             <p className="panel-description">{windowError}</p>
           </section>
@@ -373,9 +372,8 @@ export default function SettingsWindowApp() {
   if (desktopSettings === null || toolState === null) {
     return (
       <main className="page-shell desktop-shell desktop-utility-window">
-        <section className="page-grid narrow">
-          <section className="panel desktop-state-card" aria-live="polite">
-            <div className="eyebrow">Settings</div>
+        <section className="desktop-utility-grid">
+          <section className="desktop-state-view" aria-live="polite">
             <h2>Loading settings</h2>
             <p className="panel-description">
               BE Home is loading your folder choices and Board Install Tool details.
@@ -388,11 +386,10 @@ export default function SettingsWindowApp() {
 
   return (
     <main className="page-shell desktop-shell desktop-utility-window">
-      <section className="page-grid narrow desktop-utility-grid">
-        <section className="panel desktop-utility-card">
+      <section className="desktop-utility-grid">
+        <section className="desktop-utility-dialog">
           <header className="desktop-utility-header">
             <div className="desktop-utility-heading">
-              <div className="eyebrow">Settings</div>
               <h1>BE Home for Desktop settings</h1>
               <p className="panel-description">
                 Keep the most important folders, Board checks, and Board Install Tool options in
@@ -439,18 +436,19 @@ export default function SettingsWindowApp() {
           <section className="desktop-utility-body" aria-live="polite">
             {activeTabId === "locations" ? (
               <section className="desktop-settings-page">
-                <div className="eyebrow">Locations</div>
                 <h2>Choose where BE Home looks and saves.</h2>
 
                 <section className="desktop-settings-section">
-                  <div className="desktop-list-editor-header">
+                  <div className="desktop-list-editor-header desktop-list-editor-header--stacked">
                     <div>
                       <span className="desktop-field-label">Games and apps folders</span>
                       <p className="desktop-section-copy">
                         BE Home checks these folders when you rescan this computer.
                       </p>
                     </div>
-                    {iconButton("add", "Add folder", () => void handleAddScanFolder(), busy)}
+                    <div className="desktop-list-editor-actions">
+                      {iconButton("add", "Add folder", () => void handleAddScanFolder(), busy)}
+                    </div>
                   </div>
 
                   {desktopSettings.scanFolders.length === 0 ? (
@@ -467,12 +465,14 @@ export default function SettingsWindowApp() {
                               {folder.source === "default" ? "Recommended folder" : "Custom folder"}
                             </p>
                           </div>
-                          {iconButton(
-                            "remove",
-                            `Remove ${folder.path}`,
-                            () => void handleRemoveScanFolder(folder.path),
-                            busy,
-                          )}
+                          <div className="desktop-folder-actions">
+                            {iconButton(
+                              "remove",
+                              `Remove ${folder.path}`,
+                              () => void handleRemoveScanFolder(folder.path),
+                              busy,
+                            )}
+                          </div>
                         </li>
                       ))}
                     </ul>
@@ -525,7 +525,6 @@ export default function SettingsWindowApp() {
 
             {activeTabId === "boardConnection" ? (
               <section className="desktop-settings-page">
-                <div className="eyebrow">Board Connection</div>
                 <h2>Choose how often BE Home checks your Board.</h2>
                 <p className="panel-description">
                   BE Home only refreshes while its main window is visible.
@@ -563,7 +562,6 @@ export default function SettingsWindowApp() {
 
             {activeTabId === "boardTool" ? (
               <section className="desktop-settings-page">
-                <div className="eyebrow">Board Install Tool</div>
                 <h2>Keep the Board Install Tool ready.</h2>
                 <p className="panel-description">
                   BE Home uses this helper to talk to your Board and install games and apps.
@@ -577,7 +575,7 @@ export default function SettingsWindowApp() {
                     </div>
                   </label>
                   <label className="desktop-field">
-                    <span className="desktop-field-label">Latest version in BE Home</span>
+                    <span className="desktop-field-label">Latest version available from Board</span>
                     <div className="desktop-readonly-field">
                       {formatBoardInstallToolVersion(
                         toolState.updateStatus.availableVersion,
@@ -621,14 +619,16 @@ export default function SettingsWindowApp() {
                   >
                     {busy ? "Working..." : toolActionLabel(toolState)}
                   </button>
-                  <button
-                    className="secondary-button"
-                    disabled={busy}
-                    onClick={() => void handleCheckForUpdate()}
-                    type="button"
-                  >
-                    Check for Update
-                  </button>
+                  {toolState.executableExists ? (
+                    <button
+                      className="secondary-button"
+                      disabled={busy}
+                      onClick={() => void handleCheckForUpdate()}
+                      type="button"
+                    >
+                      Check for Update
+                    </button>
+                  ) : null}
                 </div>
               </section>
             ) : null}
@@ -664,10 +664,9 @@ export default function SettingsWindowApp() {
         <section className="desktop-modal-scrim" role="presentation">
           <article
             aria-labelledby="settings-support-request-title"
-            className="panel desktop-modal-card"
+            className="desktop-modal-card"
             role="dialog"
           >
-            <div className="eyebrow">Board Support</div>
             <h2 id="settings-support-request-title">Email Board Support</h2>
             <p className="panel-description">
               BE Home can open this draft in your mail app for you.

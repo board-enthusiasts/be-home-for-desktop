@@ -40,6 +40,7 @@ pub(crate) struct SetupGateState {
 /// Load the current setup-gate state used to decide whether the app can open the workspace.
 pub(crate) fn load_setup_gate_state() -> Result<SetupGateState, String> {
     let desktop_settings = storage::load_desktop_settings()?;
+    let setup_completed = storage::load_setup_completed()?;
     let tool_state = bdb_tool::load_current_bdb_tool_state()?;
 
     Ok(build_setup_gate_state(
@@ -55,6 +56,7 @@ pub(crate) fn load_setup_gate_state() -> Result<SetupGateState, String> {
             .iter()
             .map(|folder| folder.path.clone())
             .collect(),
+        setup_completed,
     ))
 }
 
@@ -62,6 +64,7 @@ fn build_setup_gate_state(
     tool_state: bdb_tool::BdbToolState,
     storage: storage::ManagedStorageSettings,
     default_scan_folders: Vec<String>,
+    setup_completed: bool,
 ) -> SetupGateState {
     let (status, required_step, summary, guidance) = match tool_state.status {
         bdb_tool::BdbToolStatus::Unsupported => (
@@ -69,13 +72,6 @@ fn build_setup_gate_state(
             SetupRequiredStep::SystemCheck,
             "This computer cannot complete the Board install-tool setup yet.".into(),
             tool_state.guidance.clone(),
-        ),
-        bdb_tool::BdbToolStatus::Runnable => (
-            SetupGateStatus::Ready,
-            SetupRequiredStep::Workspace,
-            "Board's install tool is ready, so BE Home can open your desktop workspace."
-                .into(),
-            "You can come back to repair the install tool later if anything changes.".into(),
         ),
         bdb_tool::BdbToolStatus::Missing => (
             SetupGateStatus::RequiresSetup,
@@ -90,6 +86,19 @@ fn build_setup_gate_state(
             "BE Home found Board's install tool, but it still needs attention before installs can start."
                 .into(),
             tool_state.guidance.clone(),
+        ),
+        bdb_tool::BdbToolStatus::Runnable if !setup_completed => (
+            SetupGateStatus::RequiresSetup,
+            SetupRequiredStep::Workspace,
+            "BE Home still needs you to finish setup before the workspace can open.".into(),
+            "Finish setup to confirm where BE Home should look for games and apps and where saved copies should live on this computer.".into(),
+        ),
+        bdb_tool::BdbToolStatus::Runnable => (
+            SetupGateStatus::Ready,
+            SetupRequiredStep::Workspace,
+            "Board's install tool is ready, so BE Home can open your desktop workspace."
+                .into(),
+            "You can come back to repair the install tool later if anything changes.".into(),
         ),
     };
 
@@ -142,6 +151,7 @@ mod tests {
             sample_tool_state(BdbToolStatus::Missing, BdbRunnableStatus::Missing),
             sample_storage_settings(),
             vec!["/tmp/Downloads".into()],
+            false,
         );
 
         assert_eq!(SetupGateStatus::RequiresSetup, state.status);
@@ -154,6 +164,7 @@ mod tests {
             sample_tool_state(BdbToolStatus::Runnable, BdbRunnableStatus::Runnable),
             sample_storage_settings(),
             vec!["/tmp/Downloads".into()],
+            true,
         );
 
         assert_eq!(SetupGateStatus::Ready, state.status);
@@ -166,10 +177,24 @@ mod tests {
             sample_tool_state(BdbToolStatus::Unsupported, BdbRunnableStatus::Unsupported),
             sample_storage_settings(),
             Vec::new(),
+            false,
         );
 
         assert_eq!(SetupGateStatus::Unsupported, state.status);
         assert_eq!(SetupRequiredStep::SystemCheck, state.required_step);
+    }
+
+    #[test]
+    fn runnable_tool_stays_in_setup_until_the_wizard_is_finished() {
+        let state = build_setup_gate_state(
+            sample_tool_state(BdbToolStatus::Runnable, BdbRunnableStatus::Runnable),
+            sample_storage_settings(),
+            vec!["/tmp/Downloads".into()],
+            false,
+        );
+
+        assert_eq!(SetupGateStatus::RequiresSetup, state.status);
+        assert_eq!(SetupRequiredStep::Workspace, state.required_step);
     }
 
     fn sample_tool_state(

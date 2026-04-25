@@ -1,17 +1,16 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   acquireBdbTool,
   dismissSetupWizardWindow,
-  emitSettingsUpdated,
+  finishSetupWizardWindow,
   loadBdbToolState,
   loadDesktopSettings,
   loadSetupGateState,
   refreshBdbToolState,
   saveDesktopSettings,
-  showMainWorkspaceWindow,
 } from "../desktop/client";
 import type {
   BdbToolState,
@@ -33,6 +32,12 @@ interface InlineNotice {
   tone: "neutral" | "warning" | "success";
   title: string;
   detail: string | null;
+}
+
+interface WizardAlertDialog {
+  title: string;
+  detail: string | null;
+  acknowledgeLabel?: string;
 }
 
 const wizardSteps: WizardStep[] = [
@@ -81,6 +86,32 @@ function normalizeLibraryOverride(defaultPath: string, draftValue: string): stri
   return normalizedDraft;
 }
 
+function normalizeFolderPathForComparison(path: string, operatingSystem: DesktopSettings["operatingSystem"]): string {
+  const normalized = path.replace(/[\\/]+/g, "/").replace(/\/+$/, "");
+  return operatingSystem === "windows" ? normalized.toLowerCase() : normalized;
+}
+
+function findCoveringScanFolder(
+  scanFolders: string[],
+  candidatePath: string,
+  operatingSystem: DesktopSettings["operatingSystem"],
+): string | null {
+  const normalizedCandidate = normalizeFolderPathForComparison(candidatePath, operatingSystem);
+
+  for (const existingPath of scanFolders) {
+    const normalizedExisting = normalizeFolderPathForComparison(existingPath, operatingSystem);
+
+    if (
+      normalizedCandidate.length > normalizedExisting.length &&
+      normalizedCandidate.startsWith(`${normalizedExisting}/`)
+    ) {
+      return existingPath;
+    }
+  }
+
+  return null;
+}
+
 function supportInstructionText(): string {
   return "Please enter your email address in the From field and add your name at the end before sending.";
 }
@@ -107,7 +138,11 @@ export default function SetupWizardApp() {
   const [windowError, setWindowError] = useState<string | null>(null);
   const [inlineNotice, setInlineNotice] = useState<InlineNotice | null>(null);
   const [busy, setBusy] = useState(false);
+  const [latestVersionRefreshing, setLatestVersionRefreshing] = useState(false);
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [supportDialogDraft, setSupportDialogDraft] = useState<SupportRequestDraft | null>(null);
+  const [wizardAlertDialog, setWizardAlertDialog] = useState<WizardAlertDialog | null>(null);
+  const allowWindowCloseRef = useRef(false);
 
   const currentStepIndex = wizardSteps.findIndex((step) => step.id === currentStepId);
   const toolStepBlocked = toolState?.supportRequestDraft !== null;
@@ -118,16 +153,32 @@ export default function SetupWizardApp() {
   }, []);
 
   useEffect(() => {
-    let unlistenCloseRequest: (() => void) | null = null;
+    if (currentStepId !== "boardTool") {
+      return;
+    }
 
-    void getCurrentWindow()
+    void refreshBoardToolDetails({ announceResult: false });
+  }, [currentStepId]);
+
+  useEffect(() => {
+    let unlistenCloseRequest: (() => void) | null = null;
+    let currentWindow: ReturnType<typeof getCurrentWindow>;
+
+    try {
+      currentWindow = getCurrentWindow();
+    } catch {
+      return () => undefined;
+    }
+
+    void currentWindow
       .onCloseRequested(async (event) => {
-        if (setupGateState?.status === "ready") {
+        if (allowWindowCloseRef.current) {
           return;
         }
 
         event.preventDefault();
-        await handleCancelSetup();
+        setSupportDialogDraft(null);
+        setCancelDialogOpen(true);
       })
       .then((unlisten) => {
         unlistenCloseRequest = unlisten;
@@ -139,7 +190,7 @@ export default function SetupWizardApp() {
         unlistenCloseRequest();
       }
     };
-  }, [setupGateState?.status]);
+  }, []);
 
   const readySummaryRows = useMemo(
     () =>
@@ -184,6 +235,11 @@ export default function SetupWizardApp() {
     }
   }
 
+  function showWizardAlert(dialog: WizardAlertDialog): void {
+    setInlineNotice(null);
+    setWizardAlertDialog(dialog);
+  }
+
   async function saveDraftSettings(): Promise<boolean> {
     if (desktopSettings === null) {
       return false;
@@ -205,11 +261,9 @@ export default function SetupWizardApp() {
       setDesktopSettings(savedSettings);
       setScanFolderDraft(savedSettings.scanFolders.map((folder) => folder.path));
       setLibraryPathDraft(savedSettings.apkLibrary.effectivePath);
-      await emitSettingsUpdated();
       return true;
     } catch {
-      setInlineNotice({
-        tone: "warning",
+      showWizardAlert({
         title: "BE Home couldn't save these setup choices yet.",
         detail: "Please try again in a moment.",
       });
@@ -219,14 +273,41 @@ export default function SetupWizardApp() {
     }
   }
 
-  async function handleCancelSetup(): Promise<void> {
-    await dismissSetupWizardWindow();
+  async function dismissWizardOrExitProgrammatically(): Promise<void> {
+    allowWindowCloseRef.current = true;
+
+    try {
+      await dismissSetupWizardWindow();
+    } catch (error) {
+      allowWindowCloseRef.current = false;
+      throw error;
+    }
   }
 
-  async function handleOpenWorkspace(): Promise<void> {
-    await emitSettingsUpdated();
-    await showMainWorkspaceWindow();
-    await dismissSetupWizardWindow();
+  function handleCancelSetup(): void {
+    if (busy) {
+      return;
+    }
+
+    setSupportDialogDraft(null);
+    setCancelDialogOpen(true);
+  }
+
+  async function handleConfirmCancelSetup(): Promise<void> {
+    setBusy(true);
+    setInlineNotice(null);
+    setWizardAlertDialog(null);
+
+    try {
+      await dismissWizardOrExitProgrammatically();
+    } catch {
+      setBusy(false);
+      setCancelDialogOpen(false);
+      showWizardAlert({
+        title: "BE Home couldn't close setup just yet.",
+        detail: "Please try again in a moment.",
+      });
+    }
   }
 
   async function handleDownloadOrRepair(): Promise<void> {
@@ -236,20 +317,27 @@ export default function SetupWizardApp() {
 
     setBusy(true);
     setInlineNotice(null);
+    setWizardAlertDialog(null);
 
     try {
       const result = await acquireBdbTool(toolState.executableExists);
-      setInlineNotice({
-        tone: result.outcome === "failed" ? "warning" : "success",
-        title: result.summary,
-        detail: result.guidance,
-      });
+      if (result.outcome === "failed") {
+        showWizardAlert({
+          title: result.summary,
+          detail: result.guidance,
+        });
+      } else {
+        setInlineNotice({
+          tone: "success",
+          title: result.summary,
+          detail: result.guidance,
+        });
+      }
       await refreshWindowState({
         refreshManifest: result.outcome !== "failed",
       });
     } catch {
-      setInlineNotice({
-        tone: "warning",
+      showWizardAlert({
         title: "BE Home couldn't finish that Board Install Tool step.",
         detail: "Please try again in a moment.",
       });
@@ -258,32 +346,53 @@ export default function SetupWizardApp() {
     }
   }
 
-  async function handleCheckForUpdate(): Promise<void> {
-    setBusy(true);
-    setInlineNotice(null);
+  async function refreshBoardToolDetails(options: {
+    announceResult: boolean;
+  }): Promise<void> {
+    setLatestVersionRefreshing(true);
 
     try {
       const latestToolState = await refreshBdbToolState();
       setToolState(latestToolState);
-      setInlineNotice({
-        tone: latestToolState.updateStatus.status === "updateAvailable" ? "warning" : "neutral",
-        title: "BE Home checked Board's latest Board Install Tool version.",
-        detail:
-          latestToolState.updateStatus.guidance ??
-          "You can review the current version details below.",
-      });
+
+      if (options.announceResult) {
+        setInlineNotice({
+          tone: "neutral",
+          title: "BE Home checked Board's latest Board Install Tool version.",
+          detail:
+            latestToolState.updateStatus.guidance ??
+            "You can review the current version details below.",
+        });
+      }
     } catch {
-      setInlineNotice({
-        tone: "warning",
-        title: "BE Home couldn't check for Board Install Tool updates right now.",
-        detail: "Please try again in a moment.",
-      });
+      if (options.announceResult) {
+        showWizardAlert({
+          title: "BE Home couldn't check for Board Install Tool updates right now.",
+          detail: "Please try again in a moment.",
+        });
+      }
+    } finally {
+      setLatestVersionRefreshing(false);
+    }
+  }
+
+  async function handleCheckForUpdate(): Promise<void> {
+    setBusy(true);
+    setInlineNotice(null);
+    setWizardAlertDialog(null);
+
+    try {
+      await refreshBoardToolDetails({ announceResult: true });
     } finally {
       setBusy(false);
     }
   }
 
   async function handleAddScanFolder(): Promise<void> {
+    if (desktopSettings === null) {
+      return;
+    }
+
     const selectedPath = await pickSinglePath(
       await open({
         directory: true,
@@ -295,11 +404,36 @@ export default function SetupWizardApp() {
       return;
     }
 
-    if (scanFolderDraft.includes(selectedPath)) {
+    const normalizedSelectedPath = normalizeFolderPathForComparison(
+      selectedPath,
+      desktopSettings.operatingSystem,
+    );
+    const existingExactMatch = scanFolderDraft.find(
+      (path) =>
+        normalizeFolderPathForComparison(path, desktopSettings.operatingSystem) ===
+        normalizedSelectedPath,
+    );
+
+    if (existingExactMatch !== undefined) {
       setInlineNotice({
         tone: "neutral",
         title: "That folder is already on the list.",
         detail: "Choose another folder if you want BE Home to watch an additional place.",
+      });
+      return;
+    }
+
+    const coveringFolder = findCoveringScanFolder(
+      scanFolderDraft,
+      selectedPath,
+      desktopSettings.operatingSystem,
+    );
+
+    if (coveringFolder !== null) {
+      showWizardAlert({
+        title: "That folder is already covered by another rule.",
+        detail: `BE Home is already checking ${coveringFolder}, so you don't need to add ${selectedPath} separately.`,
+        acknowledgeLabel: "Got it",
       });
       return;
     }
@@ -338,8 +472,7 @@ export default function SetupWizardApp() {
     try {
       await openUrl(supportDialogDraft.mailtoUrl);
     } catch {
-      setInlineNotice({
-        tone: "warning",
+      showWizardAlert({
         title: "BE Home couldn't open your email app automatically.",
         detail: "You can still copy the email draft from this window.",
       });
@@ -366,8 +499,7 @@ export default function SetupWizardApp() {
         detail: "Paste it into your mail app, then add your email address and name before sending.",
       });
     } catch {
-      setInlineNotice({
-        tone: "warning",
+      showWizardAlert({
         title: "BE Home couldn't copy the email draft automatically.",
         detail: "Please use the text shown in this window instead.",
       });
@@ -379,11 +511,22 @@ export default function SetupWizardApp() {
       return;
     }
 
-    await handleOpenWorkspace();
+    try {
+      allowWindowCloseRef.current = true;
+      setCancelDialogOpen(false);
+      await finishSetupWizardWindow();
+    } catch {
+      allowWindowCloseRef.current = false;
+      showWizardAlert({
+        title: "BE Home couldn't finish setup just yet.",
+        detail: "Please try again in a moment.",
+      });
+    }
   }
 
   async function handleNext(): Promise<void> {
     setInlineNotice(null);
+    setWizardAlertDialog(null);
 
     switch (currentStepId) {
       case "welcome":
@@ -391,26 +534,22 @@ export default function SetupWizardApp() {
         return;
       case "boardTool":
         if (!canAdvancePastToolStep) {
-          setInlineNotice({
-            tone: "warning",
-            title: "Finish the Board Install Tool step first.",
+          showWizardAlert({
+            title: "Download the Board Install Tool first.",
             detail: toolStepBlocked
-              ? "This build of the Board Install Tool is not compatible with this computer yet."
-              : "BE Home needs the Board Install Tool ready before it can open the workspace.",
+              ? "This Board Install Tool download is not compatible with this computer yet. Use Email Board Support in this step if you want to ask Board for support."
+              : "BE Home can't move to the next step until the Board Install Tool is downloaded and ready. Choose Download in this step, then try Next again.",
+            acknowledgeLabel: toolStepBlocked ? "OK" : "Got it",
           });
           return;
         }
         setCurrentStepId("scanFolders");
         return;
       case "scanFolders":
-        if (await saveDraftSettings()) {
-          setCurrentStepId("libraryLocation");
-        }
+        setCurrentStepId("libraryLocation");
         return;
       case "libraryLocation":
-        if (await saveDraftSettings()) {
-          setCurrentStepId("ready");
-        }
+        setCurrentStepId("ready");
         return;
       case "ready":
         await handleFinish();
@@ -422,6 +561,7 @@ export default function SetupWizardApp() {
 
   function handleBack(): void {
     setInlineNotice(null);
+    setWizardAlertDialog(null);
     setCurrentStepId((previousStepId) => {
       const previousIndex = wizardSteps.findIndex((step) => step.id === previousStepId) - 1;
       return wizardSteps[Math.max(previousIndex, 0)]?.id ?? "welcome";
@@ -431,9 +571,8 @@ export default function SetupWizardApp() {
   if (windowError !== null) {
     return (
       <main className="page-shell desktop-shell desktop-utility-window">
-        <section className="page-grid narrow">
-          <section className="panel desktop-state-card" aria-live="polite">
-            <div className="eyebrow">Setup Wizard</div>
+        <section className="desktop-utility-grid">
+          <section className="desktop-state-view" aria-live="polite">
             <h2>Please close BE Home for Desktop and try again.</h2>
             <p className="panel-description">{windowError}</p>
           </section>
@@ -445,9 +584,8 @@ export default function SetupWizardApp() {
   if (setupGateState === null || toolState === null || desktopSettings === null) {
     return (
       <main className="page-shell desktop-shell desktop-utility-window">
-        <section className="page-grid narrow">
-          <section className="panel desktop-state-card" aria-live="polite">
-            <div className="eyebrow">Setup Wizard</div>
+        <section className="desktop-utility-grid">
+          <section className="desktop-state-view" aria-live="polite">
             <h2>Getting setup ready</h2>
             <p className="panel-description">
               BE Home is checking your Board Install Tool, game folders, and saved library
@@ -461,15 +599,14 @@ export default function SetupWizardApp() {
 
   return (
     <main className="page-shell desktop-shell desktop-utility-window">
-      <section className="page-grid narrow desktop-utility-grid">
-        <section className="panel desktop-utility-card">
+      <section className="desktop-utility-grid">
+        <section className="desktop-utility-dialog desktop-utility-dialog--wizard">
           <header className="desktop-utility-header">
             <div className="desktop-utility-heading">
-              <div className="eyebrow">Setup Wizard</div>
               <h1>Set up BE Home for Desktop</h1>
               <p className="panel-description">
-                BE Home for Desktop helps you find games and apps on this computer, keep a saved
-                library close by, and install them on Board without command-line steps.
+                Setup gets BE Home ready to find games and apps on this computer and install them
+                on Board without command-line steps.
               </p>
             </div>
             <ol className="desktop-wizard-step-row" aria-label="Setup steps">
@@ -494,27 +631,16 @@ export default function SetupWizardApp() {
           <section className="desktop-utility-body" aria-live="polite">
             {currentStepId === "welcome" ? (
               <section className="desktop-wizard-page">
-                <div className="eyebrow">Welcome</div>
-                <h2>Here’s what setup will help you do.</h2>
+                <h2>Here’s what setup will do.</h2>
                 <p className="panel-description">
-                  BE Home for Desktop helps you choose games and apps on this computer and install
-                  them on your Board without working through terminal steps by hand.
+                  You’ll download the Board Install Tool, choose which folders BE Home checks for
+                  games and apps, and pick where saved copies should live on this computer.
                 </p>
-                <p className="panel-description">
-                  This quick setup will download the Board Install Tool, choose where BE Home looks
-                  for games and apps, and choose where saved copies should live on this computer.
-                </p>
-                <ul className="desktop-wizard-checklist">
-                  <li>Get the Board Install Tool ready so BE Home can talk to your Board.</li>
-                  <li>Choose the folders BE Home should check for game and app files.</li>
-                  <li>Choose where saved copies should be kept for later installs.</li>
-                </ul>
               </section>
             ) : null}
 
             {currentStepId === "boardTool" ? (
               <section className="desktop-wizard-page">
-                <div className="eyebrow">Board Install Tool</div>
                 <h2>Get the Board Install Tool ready.</h2>
                 <p className="panel-description">
                   BE Home needs Board’s install helper so it can install games and apps on your
@@ -533,11 +659,11 @@ export default function SetupWizardApp() {
                     </div>
                   </label>
                   <label className="desktop-field">
-                    <span className="desktop-field-label">Latest version in BE Home</span>
+                    <span className="desktop-field-label">Latest version available from Board</span>
                     <div className="desktop-readonly-field">
                       {formatBoardInstallToolVersion(
                         toolState.updateStatus.availableVersion,
-                        "Not available yet",
+                        latestVersionRefreshing ? "Checking..." : "Not available yet",
                       )}
                     </div>
                   </label>
@@ -576,14 +702,16 @@ export default function SetupWizardApp() {
                   >
                     {busy ? "Working..." : updateActionLabel(toolState)}
                   </button>
-                  <button
-                    className="secondary-button"
-                    disabled={busy}
-                    onClick={() => void handleCheckForUpdate()}
-                    type="button"
-                  >
-                    Check for Update
-                  </button>
+                  {toolState.executableExists ? (
+                    <button
+                      className="secondary-button"
+                      disabled={busy}
+                      onClick={() => void handleCheckForUpdate()}
+                      type="button"
+                    >
+                      Check for Update
+                    </button>
+                  ) : null}
                 </div>
 
                 <p className="desktop-footnote">
@@ -594,7 +722,6 @@ export default function SetupWizardApp() {
 
             {currentStepId === "scanFolders" ? (
               <section className="desktop-wizard-page">
-                <div className="eyebrow">Look for Games &amp; Apps</div>
                 <h2>Choose the folders BE Home should check.</h2>
                 <p className="panel-description">
                   BE Home can look in these folders when you rescan this computer for games and
@@ -604,7 +731,6 @@ export default function SetupWizardApp() {
                 <section className="desktop-list-editor">
                   <div className="desktop-list-editor-header">
                     <span className="desktop-field-label">Folders to check</span>
-                    {iconButtonLabel("add", "Add folder", () => void handleAddScanFolder(), busy)}
                   </div>
 
                   {scanFolderDraft.length === 0 ? (
@@ -618,23 +744,30 @@ export default function SetupWizardApp() {
                           <div className="desktop-folder-copy">
                             <p className="desktop-folder-path">{path}</p>
                           </div>
-                          {iconButtonLabel(
-                            "remove",
-                            `Remove ${path}`,
-                            () => handleRemoveScanFolder(path),
-                            busy,
-                          )}
+                          <div className="desktop-folder-actions">
+                            {iconButtonLabel(
+                              "remove",
+                              `Remove ${path}`,
+                              () => handleRemoveScanFolder(path),
+                              busy,
+                            )}
+                          </div>
                         </li>
                       ))}
                     </ul>
                   )}
+
+                  <div className="desktop-list-editor-footer">
+                    <div className="desktop-list-editor-actions">
+                      {iconButtonLabel("add", "Add folder", () => void handleAddScanFolder(), busy)}
+                    </div>
+                  </div>
                 </section>
               </section>
             ) : null}
 
             {currentStepId === "libraryLocation" ? (
               <section className="desktop-wizard-page">
-                <div className="eyebrow">Library Location</div>
                 <h2>Choose where saved copies should live.</h2>
                 <p className="panel-description">
                   BE Home can keep reusable copies of your games and apps in one saved library so
@@ -680,7 +813,6 @@ export default function SetupWizardApp() {
 
             {currentStepId === "ready" ? (
               <section className="desktop-wizard-page">
-                <div className="eyebrow">Ready to Go</div>
                 <h2>Your setup choices are ready.</h2>
                 <p className="panel-description">
                   You can finish now and open BE Home, or go back if you want to change anything.
@@ -716,7 +848,7 @@ export default function SetupWizardApp() {
             <button
               className="tertiary-button"
               disabled={busy}
-              onClick={() => void handleCancelSetup()}
+              onClick={handleCancelSetup}
               type="button"
             >
               Cancel
@@ -740,14 +872,46 @@ export default function SetupWizardApp() {
         </section>
       </section>
 
+      {cancelDialogOpen ? (
+        <section className="desktop-modal-scrim" role="presentation">
+          <article
+            aria-labelledby="cancel-setup-title"
+            className="desktop-modal-card"
+            role="dialog"
+          >
+            <h2 id="cancel-setup-title">Cancel setup?</h2>
+            <p className="panel-description">
+              If you cancel setup now, the choices you made in this window will be lost.
+            </p>
+            <div className="desktop-inline-button-row">
+              <button
+                className="primary-button"
+                disabled={busy}
+                onClick={() => void handleConfirmCancelSetup()}
+                type="button"
+              >
+                Yes, Cancel Setup
+              </button>
+              <button
+                className="secondary-button"
+                disabled={busy}
+                onClick={() => setCancelDialogOpen(false)}
+                type="button"
+              >
+                Keep Setup Open
+              </button>
+            </div>
+          </article>
+        </section>
+      ) : null}
+
       {supportDialogDraft !== null ? (
         <section className="desktop-modal-scrim" role="presentation">
           <article
             aria-labelledby="support-request-title"
-            className="panel desktop-modal-card"
+            className="desktop-modal-card"
             role="dialog"
           >
-            <div className="eyebrow">Board Support</div>
             <h2 id="support-request-title">Email Board Support</h2>
             <p className="panel-description">
               BE Home can open a draft in your mail app with the details below.
@@ -784,6 +948,31 @@ export default function SetupWizardApp() {
                 type="button"
               >
                 Close
+              </button>
+            </div>
+          </article>
+        </section>
+      ) : null}
+
+      {wizardAlertDialog !== null ? (
+        <section className="desktop-modal-scrim" role="presentation">
+          <article
+            aria-labelledby="wizard-alert-title"
+            className="desktop-modal-card"
+            role="dialog"
+          >
+            <h2 id="wizard-alert-title">{wizardAlertDialog.title}</h2>
+            {wizardAlertDialog.detail !== null ? (
+              <p className="panel-description">{wizardAlertDialog.detail}</p>
+            ) : null}
+            <div className="desktop-inline-button-row">
+              <button
+                autoFocus
+                className="primary-button"
+                onClick={() => setWizardAlertDialog(null)}
+                type="button"
+              >
+                {wizardAlertDialog.acknowledgeLabel ?? "OK"}
               </button>
             </div>
           </article>

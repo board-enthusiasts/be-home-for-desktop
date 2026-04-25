@@ -433,10 +433,7 @@ fn detect_current_platform() -> DetectedPlatform {
 
 #[cfg(target_os = "windows")]
 fn detect_windows_build_number() -> Option<u32> {
-    let output = Command::new("cmd")
-        .args(["/C", "ver"])
-        .output()
-        .ok()?;
+    let output = Command::new("cmd").args(["/C", "ver"]).output().ok()?;
 
     let version_text = String::from_utf8_lossy(&output.stdout);
     parse_windows_build_number(&version_text)
@@ -465,8 +462,9 @@ mod tests {
     use super::{
         bundled_manifest, load_manifest_with_fallbacks, parse_manifest, parse_windows_build_number,
         resolve_bdb_source_plan_for_platform, BdbArchitecture, BdbOperatingSystem,
-        BdbSourceManifestPlatform, BdbSupportStatus, BdbUnsupportedReason, DetectedPlatform, LoadedManifest,
-        LINUX_X86_64_PLATFORM_KEY, MACOS_UNIVERSAL_PLATFORM_KEY, WINDOWS_X86_64_PLATFORM_KEY,
+        BdbSourceManifestPlatform, BdbSupportStatus, BdbUnsupportedReason, DetectedPlatform,
+        LoadedManifest, LINUX_X86_64_PLATFORM_KEY, MACOS_UNIVERSAL_PLATFORM_KEY,
+        WINDOWS_X86_64_PLATFORM_KEY,
     };
     use std::cell::Cell;
     use std::fs;

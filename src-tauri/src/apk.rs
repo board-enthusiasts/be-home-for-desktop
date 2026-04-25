@@ -112,7 +112,9 @@ fn build_apk_discovery_snapshot(scan_folder_paths: Vec<String>) -> ApkDiscoveryS
                 Some(scan_folder_path.clone()),
             ) {
                 if candidate.confidence == ApkConfidence::StrongMatch {
-                    candidates_by_key.entry(candidate.stable_id.clone()).or_insert(candidate);
+                    candidates_by_key
+                        .entry(candidate.stable_id.clone())
+                        .or_insert(candidate);
                 }
             }
         }
@@ -350,9 +352,7 @@ fn extract_utf16le_strings(bytes: &[u8]) -> Vec<String> {
     for chunk in bytes.chunks_exact(2) {
         let low = chunk[0] as char;
         let high = chunk[1];
-        if high == 0
-            && (low.is_ascii_alphanumeric() || matches!(low, '.' | '_' | '-'))
-        {
+        if high == 0 && (low.is_ascii_alphanumeric() || matches!(low, '.' | '_' | '-')) {
             current.push(low);
         } else {
             if current.len() >= 6 {
@@ -387,15 +387,11 @@ fn is_common_non_app_package(value: &str) -> bool {
 
 fn confidence_summary(confidence: ApkConfidence) -> &'static str {
     match confidence {
-        ApkConfidence::StrongMatch => {
-            "BE Home found a strong Board SDK marker in this APK."
-        }
+        ApkConfidence::StrongMatch => "BE Home found a strong Board SDK marker in this APK.",
         ApkConfidence::PossibleMatch => {
             "BE Home found some Android packaging signals, but not the strongest Board marker yet."
         }
-        ApkConfidence::Unknown => {
-            "BE Home did not find a clear Board marker in this APK yet."
-        }
+        ApkConfidence::Unknown => "BE Home did not find a clear Board marker in this APK yet.",
     }
 }
 
@@ -444,9 +440,12 @@ fn looks_like_package_name(value: &str) -> bool {
         return false;
     }
 
-    value.chars().all(|character| {
-        character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-')
-    }) && value.chars().any(|character| character.is_ascii_lowercase())
+    value
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-'))
+        && value
+            .chars()
+            .any(|character| character.is_ascii_lowercase())
 }
 
 fn path_identity_key(path: &str) -> String {
@@ -473,11 +472,11 @@ mod tests {
     };
     use std::fs::{self, File};
     use std::io::Write;
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
     use std::path::{Path, PathBuf};
     use zip::write::SimpleFileOptions;
     use zip::{CompressionMethod, ZipWriter};
-    #[cfg(unix)]
-    use std::os::unix::fs::symlink;
 
     #[test]
     fn discovery_snapshot_walks_nested_scan_folders_and_deduplicates_results() {
@@ -504,7 +503,10 @@ mod tests {
 
         assert_eq!(ApkDiscoveryStatus::Ready, snapshot.status);
         assert_eq!(1, snapshot.candidates.len());
-        assert_eq!(ApkConfidence::StrongMatch, snapshot.candidates[0].confidence);
+        assert_eq!(
+            ApkConfidence::StrongMatch,
+            snapshot.candidates[0].confidence
+        );
     }
 
     #[test]
@@ -556,9 +558,15 @@ mod tests {
         })
         .expect("manual apk inspection should succeed");
 
-        assert_eq!(ApkCandidateSource::ManualSelection, candidate.discovery_source);
+        assert_eq!(
+            ApkCandidateSource::ManualSelection,
+            candidate.discovery_source
+        );
         assert_eq!(ApkConfidence::StrongMatch, candidate.confidence);
-        assert_eq!(Some("fun.board.luckydice"), candidate.package_name.as_deref());
+        assert_eq!(
+            Some("fun.board.luckydice"),
+            candidate.package_name.as_deref()
+        );
     }
 
     #[test]
@@ -590,7 +598,10 @@ mod tests {
         })
         .expect("manual apk inspection should succeed");
 
-        assert_eq!(Some("fun.board.luckydice"), candidate.package_name.as_deref());
+        assert_eq!(
+            Some("fun.board.luckydice"),
+            candidate.package_name.as_deref()
+        );
     }
 
     #[test]
@@ -640,8 +651,7 @@ mod tests {
     fn write_apk_with_manifest(path: &Path, include_strong_marker: bool, manifest: &str) {
         let file = File::create(path).expect("apk file should create");
         let mut writer = ZipWriter::new(file);
-        let options = SimpleFileOptions::default()
-            .compression_method(CompressionMethod::Stored);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
 
         writer
             .start_file("AndroidManifest.xml", options)
@@ -654,12 +664,16 @@ mod tests {
             writer
                 .start_file("lib/arm64-v8a/libnativeBoardSDK.so", options)
                 .expect("strong marker should start");
-            writer.write_all(b"board-sdk").expect("strong marker should write");
+            writer
+                .write_all(b"board-sdk")
+                .expect("strong marker should write");
         } else {
             writer
                 .start_file("lib/arm64-v8a/libunity.so", options)
                 .expect("possible marker should start");
-            writer.write_all(b"unity").expect("possible marker should write");
+            writer
+                .write_all(b"unity")
+                .expect("possible marker should write");
         }
 
         writer.finish().expect("apk archive should finish");
