@@ -1,6 +1,6 @@
 # `bdb` Tool Lifecycle
 
-The desktop host is responsible for the full local `bdb` bootstrap flow. The renderer consumes typed state and result objects instead of parsing file-system or process details itself.
+The desktop app is responsible for the full local `bdb` bootstrap flow. UI Toolkit views consume typed state and result objects instead of parsing file-system or process details themselves.
 
 ## Managed Executable Path
 

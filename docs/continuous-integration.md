@@ -1,18 +1,21 @@
 # Continuous Integration
 
-This repository uses a small but real desktop validation baseline so follow-on feature work lands against visible checks.
+This repository is in the Unity cutover baseline. The authoritative local validation path is currently the root automation:
+
+```bash
+python ./scripts/dev.py desktop test
+python ./scripts/dev.py desktop build
+```
 
 ## Current Validation Scope
 
-The maintained pull-request workflow runs on Windows, macOS, and Linux and currently verifies:
+The maintained desktop validation covers:
 
-- `npm ci`
-- `npm run typecheck`
-- `npm run build`
-- `npm run test:renderer`
-- `cargo test --manifest-path src-tauri/Cargo.toml`
-
-This keeps the early baseline focused on renderer correctness, Rust host correctness, and cross-platform compile confidence without turning the first CI pass into a full release pipeline.
+- Unity `6000.4.0f1` project import
+- EditMode tests for `bdb` parsing, process timeout/cancellation, setup state, APK discovery, and shared style loading
+- PlayMode tests for UI Toolkit route/navigation state
+- a USS property review against the Unity `6000.4` USS property reference
+- a Windows standalone player build
 
 ## Current Gaps
 
@@ -24,8 +27,4 @@ The CI baseline does **not** yet do the following:
 - produce Linux release artifacts for distribution
 - publish checksums or packaged desktop releases
 
-Those release concerns are intentionally staged for the later packaging and signing tickets in Epic 1.
-
-## Linux Notes
-
-The Linux workflow installs the system packages Tauri requires to compile on Debian/Ubuntu-based runners. Keep that package list aligned with the maintained Tauri prerequisites when the desktop stack evolves.
+Those release concerns are intentionally staged after the Unity desktop baseline is merged.

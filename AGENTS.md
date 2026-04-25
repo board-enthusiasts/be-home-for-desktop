@@ -4,18 +4,24 @@ Read the `README.md` for repo context first.
 
 ## Coding Standard
 
-- Build the maintained desktop utility as a Tauri shell with a React + TypeScript renderer.
-- Keep desktop-runtime code in `src-tauri/` and renderer code in `src/`.
-- Keep developer-facing documentation in `docs/` and active planning artifacts in `planning/`.
+- Build the maintained desktop utility as a Unity `6000.4.0f1` standalone desktop app with UI Toolkit.
+- Keep desktop runtime code in `Assets/BEHomeDesktop/Runtime`, editor/build helpers in `Assets/BEHomeDesktop/Editor`, and tests in `Assets/BEHomeDesktop/Tests`.
+- Keep reusable Unity code in the root `unity-shared/` package (`com.be.unity.shared`) when both `be-home` and `be-home-for-desktop` need it.
+- Do not copy React/Tauri code or CSS into the Unity implementation.
+- Use only Unity `6000.4` supported USS properties. Avoid web CSS assumptions such as `gap`, `row-gap`, `column-gap`, complex selectors, unsupported filters, and arbitrary CSS functions.
+- Use Unity `Awaitable` for UI-facing async flows and main/background thread switching.
+- Run `bdb` through an awaitable `System.Diagnostics.Process` runner with timeout, cancellation, stdout/stderr capture, and no UI-thread blocking.
+- Do not run `bdb` commands through Unity Jobs. Use Jobs only for short CPU-bound, job-friendly work after data is copied into compatible structures.
 - Treat all UI copy and content as player-facing production copy. Do not ship text that reads like developer notes, setup placeholders, implementation breadcrumbs, or future-feature narration.
-- Write desktop UI copy for non-technical players in a friendly, helpful tone that matches the rest of the Board Enthusiasts product experience.
-- Keep desktop styling aligned with the maintained Board Enthusiasts visual language, especially the `frontend` UI, unless the platform or interaction model requires a deliberate deviation.
-- Prefer reusing or extracting shared BE styling primitives, tokens, and patterns over duplicating or independently re-creating similar styles in the desktop app.
-- Do not redistribute `bdb` in source control, packaged releases, or local bootstrap artifacts. The utility must download the correct Board-hosted `bdb` binary for the current platform as part of setup.
+- Do not redistribute `bdb` in source control, packaged releases, or local bootstrap artifacts.
 - Preserve an offline-capable local experience for device checks, local APK inventory, install, uninstall, and launch flows after first-time setup completes.
-- Treat Board Enthusiasts account features as optional enhancements on top of the account-free local utility path.
 - Always provide a manual APK selection or install override path even when automatic Board-APK detection is available.
 - Translate device, file-system, network, and CLI failures into plain-language product guidance suitable for non-technical players.
+
+## Validation
+
+- Prefer root automation: `python ./scripts/dev.py desktop test` and `python ./scripts/dev.py desktop build`.
+- Keep EditMode tests focused on services/parsers/process behavior and PlayMode tests focused on UI Toolkit navigation behavior.
 
 ## GitHub Workflow
 

@@ -1,12 +1,12 @@
 # BE Home for Desktop
 
-`be-home-for-desktop` is the desktop utility for helping Board players install, manage, and launch indie Board titles from Windows, macOS, and Linux with a guided experience instead of direct `bdb` terminal usage.
+`be-home-for-desktop` is the Unity desktop utility for helping Board players install, manage, and launch indie Board titles from Windows, macOS, and Linux with a guided experience instead of direct `bdb` terminal usage.
 
 The maintained desktop stack uses:
 
-- Tauri for the desktop shell
-- React + TypeScript for the renderer UI
-- Vite for frontend development and production builds
+- Unity `6000.4.0f1`
+- C# with UI Toolkit for the desktop UI
+- The shared Unity package `com.be.unity.shared` from the root `unity-shared/` submodule
 
 ## Product Scope
 
@@ -22,68 +22,39 @@ The desktop utility is intended to:
 ## Important Constraints
 
 - The app must not redistribute or package `bdb`; it must download `bdb` from Board-controlled distribution URLs at runtime or first-run setup.
-- The app must always allow manual APK selection or override so players are not blocked by stale detection heuristics.
+- All `bdb` process calls must run asynchronously through awaitable process execution with timeout and cancellation.
+- Unity Jobs are reserved for short CPU-bound work over job-compatible data, not process execution.
+- USS must use only properties listed in the Unity `6000.4` UI Toolkit USS property reference.
 - The core install workflow must remain usable without a Board Enthusiasts account.
 - Signed-in capabilities should enhance the flow without becoming a prerequisite.
 
-## Planned Repository Structure
+## Repository Structure
 
-- `src/`: React renderer source
-- `src-tauri/`: Tauri and Rust host application code
+- `Assets/`: Unity desktop runtime, editor helpers, UI Toolkit assets, and tests
+- `Packages/`: Unity package manifest and lock file
+- `ProjectSettings/`: Unity project settings
 - `docs/`: developer-facing documentation for this repo
 - `planning/`: active planning artifacts for this repo
 
-## Current App Foundation
-
-The current desktop foundation includes:
-
-- a runnable Tauri desktop shell with player-facing BE product copy
-- shared BE styling imported from the `frontend` theme so the suite stays visually aligned
-- a Rust host command that returns structured shell state to the renderer
-- baseline renderer and host tests so future waves can extend the app safely
-
-Next delivery waves will add real `bdb` download, validation, device monitoring, APK scanning, and install orchestration services behind this foundation.
-
 ## Local Development Prerequisites
 
-The desktop stack needs both JavaScript and Rust toolchains.
-
-- Node.js and npm for the React/Vite frontend and Tauri CLI
-- Rust toolchain (`rustup`, `cargo`, `rustc`) for the Tauri host app
-- Platform-specific Tauri prerequisites for Windows, macOS, or Linux packaging/signing
-
-If Rust is not installed yet, you can still work on the renderer-only parts of the desktop app, but not the full Tauri host.
+- Unity `6000.4.0f1`
+- Python for root automation
+- Optional: set `BE_UNITY_EDITOR_PATH` or `UNITY_EDITOR_PATH` when Unity is not discoverable at the standard Hub install path
 
 ## Local Development
 
-Install dependencies and launch the desktop shell:
+From the root `board-enthusiasts` workspace:
 
 ```bash
-npm install
-npm run tauri dev
+python ./scripts/dev.py desktop test
+python ./scripts/dev.py desktop build
 ```
 
-Useful validation commands:
+You can also open the project directly in Unity:
 
 ```bash
-npm run build
-npm run test
-```
-
-If you are still missing Rust locally, these repo-local commands remain useful:
-
-```bash
-npm install
-npm run dev
-npm run test:renderer
-```
-
-These commands still require the Rust toolchain:
-
-```bash
-npm run tauri dev
-npm run test:host
-npm run test
+python ./scripts/dev.py desktop --local-only
 ```
 
 ## Planning
