@@ -1,4 +1,4 @@
-use crate::{bdb, storage};
+use crate::{bdb, process_runner, storage};
 use reqwest::blocking::Client;
 use serde::Serialize;
 use std::fs;
@@ -6,12 +6,12 @@ use std::io;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 const BDB_HELP_ARGUMENT: &str = "help";
 const BDB_VERSION_ARGUMENT: &str = "version";
 const BDB_DOWNLOAD_TIMEOUT_SECONDS: u64 = 30;
+const BDB_TOOL_PROBE_TIMEOUT_SECONDS: u64 = 5;
 const BOARD_SUPPORT_EMAIL: &str = "hello@board.fun";
 const BOARD_SUPPORT_SUBJECT: &str = "OS Support Request for bdb";
 
@@ -244,15 +244,17 @@ impl ProcessRunner for CommandProcessRunner {
         executable_path: &Path,
         args: &[&str],
     ) -> Result<ProcessRunOutput, ProcessRunFailure> {
-        let output = Command::new(executable_path)
-            .args(args)
-            .output()
-            .map_err(classify_process_failure)?;
+        let output = process_runner::run_with_timeout(
+            executable_path,
+            args,
+            Duration::from_secs(BDB_TOOL_PROBE_TIMEOUT_SECONDS),
+        )
+        .map_err(map_process_failure)?;
 
         Ok(ProcessRunOutput {
-            exit_code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            exit_code: output.exit_code,
+            stdout: output.stdout,
+            stderr: output.stderr,
         })
     }
 }
@@ -276,6 +278,16 @@ pub(crate) fn load_current_bdb_tool_state_with_remote_refresh(
         source_plan,
         storage_settings,
         &CommandProcessRunner,
+    ))
+}
+
+/// Load a lightweight `bdb` tool state for background device checks.
+pub(crate) fn load_current_bdb_tool_state_for_device_poll() -> Result<BdbToolState, String> {
+    let source_plan = bdb::resolve_current_bdb_source_plan();
+    let storage_settings = storage::load_managed_storage_settings()?;
+    Ok(inspect_bdb_tool_state_without_runtime_probe(
+        source_plan,
+        storage_settings,
     ))
 }
 
@@ -483,6 +495,96 @@ fn acquire_bdb_tool_with_dependencies<D: BinaryDownloader, P: ProcessRunner>(
     }
 }
 
+fn inspect_bdb_tool_state_without_runtime_probe(
+    source_plan: bdb::BdbSourcePlan,
+    storage_settings: storage::ManagedStorageSettings,
+) -> BdbToolState {
+    let storage_location = storage_settings.bdb_tools.clone();
+    let executable_path = resolve_bdb_executable_path(&storage_location);
+    let executable_exists = executable_path.exists();
+    let validation_command = build_validation_command(&executable_path);
+
+    if source_plan.support.status == bdb::BdbSupportStatus::Unsupported {
+        let version_check = unavailable_version_check(
+            &executable_path,
+            "BE Home cannot read a Board Install Tool version for this computer yet.".into(),
+        );
+        return BdbToolState {
+            status: BdbToolStatus::Unsupported,
+            summary: "This computer is outside Board's current bdb support matrix.".into(),
+            guidance: source_plan.support.guidance.clone(),
+            executable_path: path_to_string(&executable_path),
+            executable_exists,
+            storage: storage_location,
+            source_plan: source_plan.clone(),
+            version_check: version_check.clone(),
+            update_status: build_update_status(&source_plan, executable_exists, &version_check),
+            support_request_draft: None,
+            validation: BdbRunnableValidation {
+                status: BdbRunnableStatus::Unsupported,
+                command: validation_command,
+                exit_code: None,
+                summary: "BE Home skipped the bdb runnable check because Board does not publish a supported download for this computer.".into(),
+                detail: None,
+            },
+        };
+    }
+
+    if !executable_exists {
+        let version_check = unavailable_version_check(
+            &executable_path,
+            "BE Home has not downloaded the Board Install Tool yet.".into(),
+        );
+        return BdbToolState {
+            status: BdbToolStatus::Missing,
+            summary: "BE Home has not downloaded bdb into the managed tools folder yet.".into(),
+            guidance: "Continue setup and BE Home will download Board's bdb into its managed tools folder for you.".into(),
+            executable_path: path_to_string(&executable_path),
+            executable_exists: false,
+            storage: storage_location,
+            source_plan: source_plan.clone(),
+            version_check: version_check.clone(),
+            update_status: build_update_status(&source_plan, false, &version_check),
+            support_request_draft: None,
+            validation: BdbRunnableValidation {
+                status: BdbRunnableStatus::Missing,
+                command: validation_command,
+                exit_code: None,
+                summary: "No managed bdb executable is present yet.".into(),
+                detail: None,
+            },
+        };
+    }
+
+    let version_check = unavailable_version_check(
+        &executable_path,
+        "BE Home skips bdb version checks during background Board-status polling.".into(),
+    );
+
+    BdbToolState {
+        status: BdbToolStatus::Runnable,
+        summary: "Board's install tool is ready for background device checks.".into(),
+        guidance:
+            "BE Home will verify the Board connection without re-running the full setup check every few seconds."
+                .into(),
+        executable_path: path_to_string(&executable_path),
+        executable_exists,
+        storage: storage_location,
+        source_plan: source_plan.clone(),
+        version_check: version_check.clone(),
+        update_status: build_update_status(&source_plan, executable_exists, &version_check),
+        support_request_draft: None,
+        validation: BdbRunnableValidation {
+            status: BdbRunnableStatus::Runnable,
+            command: validation_command,
+            exit_code: None,
+            summary: "BE Home found a managed bdb executable for the background device check."
+                .into(),
+            detail: None,
+        },
+    }
+}
+
 fn download_and_store_bdb<D: BinaryDownloader>(
     storage_location: &storage::ManagedStorageLocation,
     download_url: &str,
@@ -641,9 +743,12 @@ fn load_bdb_tool_version_check<P: ProcessRunner>(
                         command,
                         value: None,
                         exit_code: output.exit_code,
-                        summary: "BE Home could not read a version number from the Board Install Tool.".into(),
+                        summary:
+                            "BE Home could not read a version number from the Board Install Tool."
+                                .into(),
                         detail: Some(
-                            "The tool opened, but it did not return a readable version line.".into(),
+                            "The tool opened, but it did not return a readable version line."
+                                .into(),
                         ),
                     },
                 }
@@ -653,7 +758,9 @@ fn load_bdb_tool_version_check<P: ProcessRunner>(
                     command,
                     value: None,
                     exit_code: output.exit_code,
-                    summary: "BE Home could not confirm which Board Install Tool version is stored here.".into(),
+                    summary:
+                        "BE Home could not confirm which Board Install Tool version is stored here."
+                            .into(),
                     detail: Some(if combined_text.is_empty() {
                         "The Board Install Tool exited before it returned a readable version line."
                             .into()
@@ -691,7 +798,10 @@ fn build_update_status(
     executable_exists: bool,
     version_check: &BdbToolVersionCheck,
 ) -> BdbUpdateStatus {
-    let available_version = source_plan.source.as_ref().and_then(|source| source.version.clone());
+    let available_version = source_plan
+        .source
+        .as_ref()
+        .and_then(|source| source.version.clone());
     let current_version = version_check.value.clone();
 
     if source_plan.support.status == bdb::BdbSupportStatus::Unsupported {
@@ -830,21 +940,27 @@ fn combined_output_text(output: &ProcessRunOutput) -> String {
 }
 
 fn first_non_empty_line(value: &str) -> Option<String> {
-    value.lines()
+    value
+        .lines()
         .map(str::trim)
         .find(|line| !line.is_empty())
         .map(str::to_owned)
 }
 
-fn classify_process_failure(error: io::Error) -> ProcessRunFailure {
-    let detail = error.to_string();
-    let kind = match error.kind() {
-        io::ErrorKind::PermissionDenied => ProcessRunFailureKind::PermissionDenied,
-        io::ErrorKind::NotFound => ProcessRunFailureKind::NotFound,
-        _ => ProcessRunFailureKind::Other,
+fn map_process_failure(failure: process_runner::ProcessCommandFailure) -> ProcessRunFailure {
+    let kind = match failure.kind {
+        process_runner::ProcessCommandFailureKind::PermissionDenied => {
+            ProcessRunFailureKind::PermissionDenied
+        }
+        process_runner::ProcessCommandFailureKind::NotFound => ProcessRunFailureKind::NotFound,
+        process_runner::ProcessCommandFailureKind::TimedOut
+        | process_runner::ProcessCommandFailureKind::Other => ProcessRunFailureKind::Other,
     };
 
-    ProcessRunFailure { kind, detail }
+    ProcessRunFailure {
+        kind,
+        detail: failure.detail,
+    }
 }
 
 fn storage_write_error(path: &Path, error: &io::Error) -> UserFacingError {
@@ -886,14 +1002,10 @@ fn percent_encode_component(value: &str) -> String {
     value
         .bytes()
         .flat_map(|byte| match byte {
-            b'A'..=b'Z'
-            | b'a'..=b'z'
-            | b'0'..=b'9'
-            | b'-'
-            | b'.'
-            | b'_'
-            | b'~' => vec![byte as char].into_iter().collect::<Vec<_>>(),
-            b' ' => vec!['%','2','0'],
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                vec![byte as char].into_iter().collect::<Vec<_>>()
+            }
+            b' ' => vec!['%', '2', '0'],
             _ => format!("%{byte:02X}").chars().collect::<Vec<_>>(),
         })
         .collect()
@@ -1093,7 +1205,10 @@ mod tests {
             replace_stored_bdb_binary_with_rename(&temp_path, &executable_path, &mut |from, to| {
                 rename_attempt += 1;
                 if rename_attempt == 2 {
-                    return Err(io::Error::new(io::ErrorKind::Other, "simulated rename failure"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        "simulated rename failure",
+                    ));
                 }
 
                 fs::rename(from, to)
@@ -1107,8 +1222,9 @@ mod tests {
         );
         assert_eq!(
             "blocked-bdb",
-            fs::read_to_string(&temp_path)
-                .expect("downloaded temp file should remain available after the failed replacement")
+            fs::read_to_string(&temp_path).expect(
+                "downloaded temp file should remain available after the failed replacement"
+            )
         );
         assert!(!resolve_bdb_backup_path(&executable_path).exists());
     }

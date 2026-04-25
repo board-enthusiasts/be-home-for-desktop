@@ -37,7 +37,16 @@ export function useWindowTheme(): DesktopTheme {
   useEffect(() => {
     let mounted = true;
     let unlistenThemeChange: (() => void) | null = null;
-    const currentWindow = getCurrentWindow();
+    let currentWindow: ReturnType<typeof getCurrentWindow>;
+
+    try {
+      currentWindow = getCurrentWindow();
+    } catch {
+      setTheme(fallbackTheme());
+      return () => {
+        mounted = false;
+      };
+    }
 
     if (typeof currentWindow.theme === "function") {
       void currentWindow

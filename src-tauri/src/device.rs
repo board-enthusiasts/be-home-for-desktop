@@ -1,12 +1,14 @@
-use crate::{bdb_tool, storage};
+use crate::{bdb_tool, process_runner, storage};
 use serde::Serialize;
-use std::io;
 use std::path::Path;
-use std::process::Command;
+use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::time::Duration;
 
 const BDB_STATUS_ARGUMENT: &str = "status";
 const BDB_VERSION_ARGUMENT: &str = "version";
 const DEFAULT_DEVICE_STATUS_POLL_INTERVAL_MS: u32 = 5_000;
+const BACKGROUND_DEVICE_STATUS_POLL_INTERVAL_MS: u32 = 15_000;
+const BDB_STATUS_TIMEOUT_SECONDS: u64 = 3;
 
 /// Describes the normalized connection state that the device workspace can consume.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -73,6 +75,13 @@ struct ProcessRunFailure {
     detail: String,
 }
 
+#[derive(Default)]
+struct DeviceStatusSession {
+    last_status: Option<DeviceStatusKind>,
+    cached_board_os_version: Option<String>,
+    cached_bdb_version: Option<BdbVersionDetails>,
+}
+
 trait ProcessRunner {
     fn run(
         &self,
@@ -89,85 +98,131 @@ impl ProcessRunner for CommandProcessRunner {
         executable_path: &Path,
         args: &[&str],
     ) -> Result<ProcessRunOutput, ProcessRunFailure> {
-        let output = Command::new(executable_path)
-            .args(args)
-            .output()
-            .map_err(classify_process_failure)?;
+        let output = process_runner::run_with_timeout(
+            executable_path,
+            args,
+            Duration::from_secs(BDB_STATUS_TIMEOUT_SECONDS),
+        )
+        .map_err(map_process_failure)?;
 
         Ok(ProcessRunOutput {
-            exit_code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            exit_code: output.exit_code,
+            stdout: output.stdout,
+            stderr: output.stderr,
         })
     }
 }
 
+static DEVICE_STATUS_SESSION: OnceLock<Mutex<DeviceStatusSession>> = OnceLock::new();
+
 /// Load the current device-status snapshot for the managed `bdb` session.
 pub(crate) fn load_current_device_status_snapshot() -> Result<DeviceStatusSnapshot, String> {
-    let tool_state = bdb_tool::load_current_bdb_tool_state()?;
-    Ok(load_device_status_snapshot_with_runner(
+    let tool_state = bdb_tool::load_current_bdb_tool_state_for_device_poll()?;
+    Ok(load_device_status_snapshot_with_runner_and_session(
         &tool_state,
         &CommandProcessRunner,
+        device_status_session(),
     ))
 }
 
+#[cfg(test)]
 fn load_device_status_snapshot_with_runner<P: ProcessRunner>(
     tool_state: &bdb_tool::BdbToolState,
     runner: &P,
 ) -> DeviceStatusSnapshot {
-    let poll_interval_ms = current_poll_interval_ms();
+    let session = Mutex::new(DeviceStatusSession::default());
+    load_device_status_snapshot_with_runner_and_session(tool_state, runner, &session)
+}
+
+fn load_device_status_snapshot_with_runner_and_session<P: ProcessRunner>(
+    tool_state: &bdb_tool::BdbToolState,
+    runner: &P,
+    session: &Mutex<DeviceStatusSession>,
+) -> DeviceStatusSnapshot {
+    let configured_poll_interval_ms = current_poll_interval_ms();
     match tool_state.status {
-        bdb_tool::BdbToolStatus::Unsupported => DeviceStatusSnapshot {
-            status: DeviceStatusKind::UnsupportedHost,
-            summary: "This computer is outside Board's current support for the desktop install tool."
-                .into(),
-            guidance: tool_state.guidance.clone(),
-            detail: None,
-            board_os_version: None,
-            poll_interval_ms,
-            bdb_version: unavailable_version_details(&tool_state.executable_path, tool_state.summary.clone()),
-        },
-        bdb_tool::BdbToolStatus::Missing => DeviceStatusSnapshot {
-            status: DeviceStatusKind::ToolMissing,
-            summary: "Board's install tool still needs to be downloaded before device checks can start."
-                .into(),
-            guidance: tool_state.guidance.clone(),
-            detail: None,
-            board_os_version: None,
-            poll_interval_ms,
-            bdb_version: unavailable_version_details(
-                &tool_state.executable_path,
-                "BE Home has not downloaded bdb yet.".into(),
-            ),
-        },
-        bdb_tool::BdbToolStatus::Downloaded => DeviceStatusSnapshot {
-            status: DeviceStatusKind::ToolBroken,
-            summary: "BE Home found the Board install tool, but this computer is not letting it run cleanly yet."
-                .into(),
-            guidance: tool_state.guidance.clone(),
-            detail: Some("Choose repair in settings to fetch a fresh copy of bdb.".into()),
-            board_os_version: None,
-            poll_interval_ms,
-            bdb_version: unavailable_version_details(
-                &tool_state.executable_path,
-                "BE Home could not trust the stored bdb copy enough to read its version.".into(),
-            ),
-        },
-        bdb_tool::BdbToolStatus::Runnable => inspect_runnable_device_status(tool_state, runner),
+        bdb_tool::BdbToolStatus::Unsupported => record_status(
+            session,
+            DeviceStatusSnapshot {
+                status: DeviceStatusKind::UnsupportedHost,
+                summary:
+                    "This computer is outside Board's current support for the desktop install tool."
+                        .into(),
+                guidance: tool_state.guidance.clone(),
+                detail: None,
+                board_os_version: None,
+                poll_interval_ms: poll_interval_for_status(
+                    DeviceStatusKind::UnsupportedHost,
+                    configured_poll_interval_ms,
+                ),
+                bdb_version: unavailable_version_details(
+                    &tool_state.executable_path,
+                    tool_state.summary.clone(),
+                ),
+            },
+        ),
+        bdb_tool::BdbToolStatus::Missing => record_status(
+            session,
+            DeviceStatusSnapshot {
+                status: DeviceStatusKind::ToolMissing,
+                summary: "Board's install tool still needs to be downloaded before device checks can start."
+                    .into(),
+                guidance: tool_state.guidance.clone(),
+                detail: None,
+                board_os_version: None,
+                poll_interval_ms: poll_interval_for_status(
+                    DeviceStatusKind::ToolMissing,
+                    configured_poll_interval_ms,
+                ),
+                bdb_version: unavailable_version_details(
+                    &tool_state.executable_path,
+                    "BE Home has not downloaded bdb yet.".into(),
+                ),
+            },
+        ),
+        bdb_tool::BdbToolStatus::Downloaded => record_status(
+            session,
+            DeviceStatusSnapshot {
+                status: DeviceStatusKind::ToolBroken,
+                summary: "BE Home found the Board install tool, but this computer is not letting it run cleanly yet."
+                    .into(),
+                guidance: tool_state.guidance.clone(),
+                detail: Some("Choose repair in settings to fetch a fresh copy of bdb.".into()),
+                board_os_version: None,
+                poll_interval_ms: poll_interval_for_status(
+                    DeviceStatusKind::ToolBroken,
+                    configured_poll_interval_ms,
+                ),
+                bdb_version: unavailable_version_details(
+                    &tool_state.executable_path,
+                    "BE Home could not trust the stored bdb copy enough to read its version."
+                        .into(),
+                ),
+            },
+        ),
+        bdb_tool::BdbToolStatus::Runnable => {
+            inspect_runnable_device_status(tool_state, runner, configured_poll_interval_ms, session)
+        }
     }
 }
 
 fn inspect_runnable_device_status<P: ProcessRunner>(
     tool_state: &bdb_tool::BdbToolState,
     runner: &P,
+    configured_poll_interval_ms: u32,
+    session: &Mutex<DeviceStatusSession>,
 ) -> DeviceStatusSnapshot {
     let executable_path = Path::new(&tool_state.executable_path);
-    let version = load_bdb_version(executable_path, runner);
+    let version = bdb_version_details_from_tool_state(tool_state);
     let status_command = build_command_string(&tool_state.executable_path, BDB_STATUS_ARGUMENT);
-    let poll_interval_ms = current_poll_interval_ms();
 
     match runner.run(executable_path, &[BDB_STATUS_ARGUMENT]) {
-        Ok(output) => normalize_status_output(output, version),
+        Ok(output) => {
+            let mut snapshot =
+                normalize_status_output(output, version, configured_poll_interval_ms);
+            refresh_connected_board_details(&mut snapshot, executable_path, runner, session);
+            snapshot
+        }
         Err(failure) => {
             let (status, summary, guidance, detail) = match failure.kind {
                 ProcessRunFailureKind::PermissionDenied => (
@@ -188,19 +243,26 @@ fn inspect_runnable_device_status<P: ProcessRunner>(
                     DeviceStatusKind::ExecutionError,
                     "BE Home could not finish the latest Board connection check.".into(),
                     "Keep Board connected, close anything else using bdb, then refresh the device check.".into(),
-                    Some(format!("The last check attempted `{status_command}`.")),
+                    Some(format!(
+                        "The last check attempted `{status_command}`. {}",
+                        failure.detail
+                    )),
                 ),
             };
+            let poll_interval_ms = poll_interval_for_status(status, configured_poll_interval_ms);
 
-            DeviceStatusSnapshot {
-                status,
-                summary,
-                guidance,
-                detail,
-                board_os_version: None,
-                poll_interval_ms,
-                bdb_version: version,
-            }
+            record_status(
+                session,
+                DeviceStatusSnapshot {
+                    status,
+                    summary,
+                    guidance,
+                    detail,
+                    board_os_version: None,
+                    poll_interval_ms,
+                    bdb_version: version,
+                },
+            )
         }
     }
 }
@@ -208,16 +270,16 @@ fn inspect_runnable_device_status<P: ProcessRunner>(
 fn normalize_status_output(
     output: ProcessRunOutput,
     version: BdbVersionDetails,
+    configured_poll_interval_ms: u32,
 ) -> DeviceStatusSnapshot {
     let combined_text = combined_output_text(&output);
     let normalized_text = combined_text.to_ascii_lowercase();
-    let board_os_version =
-        extract_board_os_version(&combined_text).or_else(|| {
-            version
-                .value
-                .as_deref()
-                .and_then(extract_board_os_version)
-        });
+    let board_os_version = extract_board_os_version(&combined_text).or_else(|| {
+        version
+            .value
+            .as_deref()
+            .and_then(extract_board_os_version_from_version_text)
+    });
 
     let (status, summary, guidance, detail) = if contains_any(
         &normalized_text,
@@ -238,8 +300,7 @@ fn normalize_status_output(
                     .into(),
             ),
         )
-    } else if output.exit_code == Some(0)
-        || contains_any(&normalized_text, &["connected", "ready"])
+    } else if output.exit_code == Some(0) || contains_any(&normalized_text, &["connected", "ready"])
     {
         (
             DeviceStatusKind::BoardConnected,
@@ -258,6 +319,7 @@ fn normalize_status_output(
                 .map(|_| "The last bdb status response did not look like a normal connected or disconnected state.".into()),
         )
     };
+    let poll_interval_ms = poll_interval_for_status(status, configured_poll_interval_ms);
 
     DeviceStatusSnapshot {
         status,
@@ -265,16 +327,48 @@ fn normalize_status_output(
         guidance,
         detail,
         board_os_version,
-        poll_interval_ms: current_poll_interval_ms(),
+        poll_interval_ms,
         bdb_version: version,
     }
 }
 
-fn load_bdb_version<P: ProcessRunner>(
+fn refresh_connected_board_details<P: ProcessRunner>(
+    snapshot: &mut DeviceStatusSnapshot,
     executable_path: &Path,
     runner: &P,
-) -> BdbVersionDetails {
-    let command = build_command_string(&path_to_string(executable_path), BDB_VERSION_ARGUMENT);
+    session: &Mutex<DeviceStatusSession>,
+) {
+    if snapshot.status != DeviceStatusKind::BoardConnected {
+        record_snapshot_status(session, snapshot);
+        return;
+    }
+
+    if should_refresh_connected_details(session) {
+        let refreshed_version = load_bdb_version(executable_path, runner);
+        if let Some(board_os_version) = refreshed_version
+            .value
+            .as_deref()
+            .and_then(extract_board_os_version_from_version_text)
+        {
+            snapshot.board_os_version = Some(board_os_version);
+        }
+        snapshot.bdb_version = refreshed_version;
+        record_snapshot_status(session, snapshot);
+        return;
+    }
+
+    let (cached_board_os_version, cached_bdb_version) = cached_connected_details(session);
+    if snapshot.board_os_version.is_none() {
+        snapshot.board_os_version = cached_board_os_version;
+    }
+    if let Some(cached_bdb_version) = cached_bdb_version {
+        snapshot.bdb_version = cached_bdb_version;
+    }
+    record_snapshot_status(session, snapshot);
+}
+
+fn load_bdb_version<P: ProcessRunner>(executable_path: &Path, runner: &P) -> BdbVersionDetails {
+    let command = build_command_string(&executable_path.to_string_lossy(), BDB_VERSION_ARGUMENT);
 
     match runner.run(executable_path, &[BDB_VERSION_ARGUMENT]) {
         Ok(output) => {
@@ -329,6 +423,71 @@ fn load_bdb_version<P: ProcessRunner>(
     }
 }
 
+fn bdb_version_details_from_tool_state(tool_state: &bdb_tool::BdbToolState) -> BdbVersionDetails {
+    let version_check = &tool_state.version_check;
+    let status = match version_check.status {
+        bdb_tool::BdbToolVersionStatus::Available => BdbVersionStatus::Available,
+        bdb_tool::BdbToolVersionStatus::Unavailable => BdbVersionStatus::Unavailable,
+    };
+
+    BdbVersionDetails {
+        status,
+        command: version_check.command.clone(),
+        value: version_check.value.clone(),
+        exit_code: version_check.exit_code,
+        summary: version_check.summary.clone(),
+        detail: version_check.detail.clone(),
+    }
+}
+
+fn device_status_session() -> &'static Mutex<DeviceStatusSession> {
+    DEVICE_STATUS_SESSION.get_or_init(|| Mutex::new(DeviceStatusSession::default()))
+}
+
+fn should_refresh_connected_details(session: &Mutex<DeviceStatusSession>) -> bool {
+    let session = lock_device_status_session(session);
+    session.last_status != Some(DeviceStatusKind::BoardConnected)
+        || (session.cached_board_os_version.is_none() && session.cached_bdb_version.is_none())
+}
+
+fn cached_connected_details(
+    session: &Mutex<DeviceStatusSession>,
+) -> (Option<String>, Option<BdbVersionDetails>) {
+    let session = lock_device_status_session(session);
+    (
+        session.cached_board_os_version.clone(),
+        session.cached_bdb_version.clone(),
+    )
+}
+
+fn record_status(
+    session: &Mutex<DeviceStatusSession>,
+    snapshot: DeviceStatusSnapshot,
+) -> DeviceStatusSnapshot {
+    record_snapshot_status(session, &snapshot);
+    snapshot
+}
+
+fn record_snapshot_status(session: &Mutex<DeviceStatusSession>, snapshot: &DeviceStatusSnapshot) {
+    let mut session = lock_device_status_session(session);
+    session.last_status = Some(snapshot.status);
+    if snapshot.status == DeviceStatusKind::BoardConnected {
+        session.cached_board_os_version = snapshot.board_os_version.clone();
+        session.cached_bdb_version = Some(snapshot.bdb_version.clone());
+    } else {
+        session.cached_board_os_version = None;
+        session.cached_bdb_version = None;
+    }
+}
+
+fn lock_device_status_session(
+    session: &Mutex<DeviceStatusSession>,
+) -> MutexGuard<'_, DeviceStatusSession> {
+    session
+        .lock()
+        .unwrap_or_else(|poisoned_session| poisoned_session.into_inner())
+}
+
 fn unavailable_version_details(executable_path: &str, summary: String) -> BdbVersionDetails {
     BdbVersionDetails {
         status: BdbVersionStatus::Unavailable,
@@ -349,7 +508,8 @@ fn combined_output_text(output: &ProcessRunOutput) -> String {
 }
 
 fn extract_board_os_version(value: &str) -> Option<String> {
-    value.lines()
+    value
+        .lines()
         .map(str::trim)
         .find_map(|line| {
             let lower = line.to_ascii_lowercase();
@@ -360,26 +520,49 @@ fn extract_board_os_version(value: &str) -> Option<String> {
         .filter(|version| !version.is_empty())
 }
 
+fn extract_board_os_version_from_version_text(value: &str) -> Option<String> {
+    extract_board_os_version(value).or_else(|| {
+        first_non_empty_line(value)
+            .filter(|line| looks_like_plain_version(line))
+            .map(|line| line.trim().to_owned())
+    })
+}
+
+fn looks_like_plain_version(value: &str) -> bool {
+    let trimmed = value.trim();
+    !trimmed.is_empty()
+        && trimmed.starts_with(|character: char| character.is_ascii_digit())
+        && trimmed.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_')
+        })
+}
+
 fn contains_any(value: &str, candidates: &[&str]) -> bool {
     candidates.iter().any(|candidate| value.contains(candidate))
 }
 
 fn first_non_empty_line(value: &str) -> Option<String> {
-    value.lines()
+    value
+        .lines()
         .map(str::trim)
         .find(|line| !line.is_empty())
         .map(str::to_owned)
 }
 
-fn classify_process_failure(error: io::Error) -> ProcessRunFailure {
-    let detail = error.to_string();
-    let kind = match error.kind() {
-        io::ErrorKind::PermissionDenied => ProcessRunFailureKind::PermissionDenied,
-        io::ErrorKind::NotFound => ProcessRunFailureKind::NotFound,
-        _ => ProcessRunFailureKind::Other,
+fn map_process_failure(failure: process_runner::ProcessCommandFailure) -> ProcessRunFailure {
+    let kind = match failure.kind {
+        process_runner::ProcessCommandFailureKind::PermissionDenied => {
+            ProcessRunFailureKind::PermissionDenied
+        }
+        process_runner::ProcessCommandFailureKind::NotFound => ProcessRunFailureKind::NotFound,
+        process_runner::ProcessCommandFailureKind::TimedOut
+        | process_runner::ProcessCommandFailureKind::Other => ProcessRunFailureKind::Other,
     };
 
-    ProcessRunFailure { kind, detail }
+    ProcessRunFailure {
+        kind,
+        detail: failure.detail,
+    }
 }
 
 fn build_command_string(executable_path: &str, argument: &str) -> String {
@@ -388,20 +571,35 @@ fn build_command_string(executable_path: &str, argument: &str) -> String {
 
 fn current_poll_interval_ms() -> u32 {
     storage::load_desktop_settings()
-        .map(|settings| settings.board_connection.poll_interval_seconds.saturating_mul(1000))
+        .map(|settings| {
+            settings
+                .board_connection
+                .poll_interval_seconds
+                .saturating_mul(1000)
+        })
         .unwrap_or(DEFAULT_DEVICE_STATUS_POLL_INTERVAL_MS)
 }
 
-fn path_to_string(path: &Path) -> String {
-    path.to_string_lossy().into_owned()
+fn poll_interval_for_status(status: DeviceStatusKind, configured_poll_interval_ms: u32) -> u32 {
+    match status {
+        DeviceStatusKind::BoardConnected => configured_poll_interval_ms,
+        DeviceStatusKind::ToolMissing
+        | DeviceStatusKind::ToolBroken
+        | DeviceStatusKind::UnsupportedHost
+        | DeviceStatusKind::BoardDisconnected
+        | DeviceStatusKind::ExecutionError => {
+            configured_poll_interval_ms.max(BACKGROUND_DEVICE_STATUS_POLL_INTERVAL_MS)
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        load_device_status_snapshot_with_runner, BdbVersionStatus, DeviceStatusKind,
-        DeviceStatusSnapshot, ProcessRunFailure, ProcessRunFailureKind, ProcessRunOutput,
-        ProcessRunner,
+        current_poll_interval_ms, load_device_status_snapshot_with_runner,
+        load_device_status_snapshot_with_runner_and_session, BdbVersionStatus, DeviceStatusKind,
+        DeviceStatusSession, DeviceStatusSnapshot, ProcessRunFailure, ProcessRunFailureKind,
+        ProcessRunOutput, ProcessRunner, BACKGROUND_DEVICE_STATUS_POLL_INTERVAL_MS,
     };
     use crate::{
         bdb::{
@@ -415,6 +613,7 @@ mod tests {
         storage::{ManagedStorageLocation, ManagedStoragePathSource},
     };
     use std::path::Path;
+    use std::sync::Mutex;
 
     struct StaticRunner {
         version: Result<ProcessRunOutput, ProcessRunFailure>,
@@ -460,7 +659,7 @@ mod tests {
         let snapshot = runnable_snapshot_with_runner(StaticRunner {
             version: Ok(ProcessRunOutput {
                 exit_code: Some(0),
-                stdout: "bdb 0.19.0".into(),
+                stdout: "Board OS Version: 1.8.1".into(),
                 stderr: String::new(),
             }),
             status: Ok(ProcessRunOutput {
@@ -471,7 +670,31 @@ mod tests {
         });
 
         assert_eq!(DeviceStatusKind::BoardConnected, snapshot.status);
-        assert_eq!(Some("bdb 0.19.0"), snapshot.bdb_version.value.as_deref());
+        assert_eq!(
+            Some("Board OS Version: 1.8.1"),
+            snapshot.bdb_version.value.as_deref()
+        );
+        assert_eq!(Some("1.8.1"), snapshot.board_os_version.as_deref());
+        assert_eq!(current_poll_interval_ms(), snapshot.poll_interval_ms);
+    }
+
+    #[test]
+    fn connected_status_accepts_plain_board_os_version_text() {
+        let snapshot = runnable_snapshot_with_runner(StaticRunner {
+            version: Ok(ProcessRunOutput {
+                exit_code: Some(0),
+                stdout: "1.8.1".into(),
+                stderr: String::new(),
+            }),
+            status: Ok(ProcessRunOutput {
+                exit_code: Some(0),
+                stdout: "Board connected and ready.".into(),
+                stderr: String::new(),
+            }),
+        });
+
+        assert_eq!(DeviceStatusKind::BoardConnected, snapshot.status);
+        assert_eq!(Some("1.8.1"), snapshot.board_os_version.as_deref());
     }
 
     #[test]
@@ -494,15 +717,121 @@ mod tests {
             "Connect your Board with USB, unlock it if needed, then choose refresh.",
             snapshot.guidance
         );
+        assert_eq!(
+            current_poll_interval_ms().max(BACKGROUND_DEVICE_STATUS_POLL_INTERVAL_MS),
+            snapshot.poll_interval_ms
+        );
     }
 
     #[test]
-    fn failed_version_command_does_not_masquerade_as_an_available_version() {
+    fn connected_status_poll_reuses_cached_board_os_until_reconnection() {
+        let session = Mutex::new(DeviceStatusSession::default());
+        let first_snapshot = runnable_snapshot_with_runner_and_session(
+            StaticRunner {
+                version: Ok(ProcessRunOutput {
+                    exit_code: Some(0),
+                    stdout: "Board OS Version: 1.8.1".into(),
+                    stderr: String::new(),
+                }),
+                status: Ok(ProcessRunOutput {
+                    exit_code: Some(0),
+                    stdout: "Board connected and ready.".into(),
+                    stderr: String::new(),
+                }),
+            },
+            &session,
+        );
+        let second_snapshot = runnable_snapshot_with_runner_and_session(
+            StaticRunner {
+                version: Err(ProcessRunFailure {
+                    kind: ProcessRunFailureKind::Other,
+                    detail: "version should not be called while the connection stays ready".into(),
+                }),
+                status: Ok(ProcessRunOutput {
+                    exit_code: Some(0),
+                    stdout: "Board connected and ready.".into(),
+                    stderr: String::new(),
+                }),
+            },
+            &session,
+        );
+
+        assert_eq!(DeviceStatusKind::BoardConnected, first_snapshot.status);
+        assert_eq!(Some("1.8.1"), first_snapshot.board_os_version.as_deref());
+        assert_eq!(DeviceStatusKind::BoardConnected, second_snapshot.status);
+        assert_eq!(Some("1.8.1"), second_snapshot.board_os_version.as_deref());
+        assert_eq!(
+            Some("Board OS Version: 1.8.1"),
+            second_snapshot.bdb_version.value.as_deref()
+        );
+    }
+
+    #[test]
+    fn connected_status_refreshes_board_os_after_disconnection() {
+        let session = Mutex::new(DeviceStatusSession::default());
+        let first_snapshot = runnable_snapshot_with_runner_and_session(
+            StaticRunner {
+                version: Ok(ProcessRunOutput {
+                    exit_code: Some(0),
+                    stdout: "Board OS Version: 1.8.1".into(),
+                    stderr: String::new(),
+                }),
+                status: Ok(ProcessRunOutput {
+                    exit_code: Some(0),
+                    stdout: "Board connected and ready.".into(),
+                    stderr: String::new(),
+                }),
+            },
+            &session,
+        );
+        let disconnected_snapshot = runnable_snapshot_with_runner_and_session(
+            StaticRunner {
+                version: Err(ProcessRunFailure {
+                    kind: ProcessRunFailureKind::Other,
+                    detail: "version should not be called while disconnected".into(),
+                }),
+                status: Ok(ProcessRunOutput {
+                    exit_code: Some(1),
+                    stdout: "Board not connected.".into(),
+                    stderr: String::new(),
+                }),
+            },
+            &session,
+        );
+        let reconnected_snapshot = runnable_snapshot_with_runner_and_session(
+            StaticRunner {
+                version: Ok(ProcessRunOutput {
+                    exit_code: Some(0),
+                    stdout: "Board OS Version: 1.9.0".into(),
+                    stderr: String::new(),
+                }),
+                status: Ok(ProcessRunOutput {
+                    exit_code: Some(0),
+                    stdout: "Board connected and ready.".into(),
+                    stderr: String::new(),
+                }),
+            },
+            &session,
+        );
+
+        assert_eq!(Some("1.8.1"), first_snapshot.board_os_version.as_deref());
+        assert_eq!(
+            DeviceStatusKind::BoardDisconnected,
+            disconnected_snapshot.status
+        );
+        assert_eq!(None, disconnected_snapshot.board_os_version);
+        assert_eq!(
+            Some("1.9.0"),
+            reconnected_snapshot.board_os_version.as_deref()
+        );
+    }
+
+    #[test]
+    fn connected_status_marks_board_os_unavailable_when_refresh_fails() {
         let snapshot = runnable_snapshot_with_runner(StaticRunner {
-            version: Ok(ProcessRunOutput {
-                exit_code: Some(1),
-                stdout: String::new(),
-                stderr: "version probe failed".into(),
+            version: Err(ProcessRunFailure {
+                kind: ProcessRunFailureKind::Other,
+                detail: "version probe failed".into(),
             }),
             status: Ok(ProcessRunOutput {
                 exit_code: Some(0),
@@ -513,11 +842,7 @@ mod tests {
 
         assert_eq!(DeviceStatusKind::BoardConnected, snapshot.status);
         assert_eq!(BdbVersionStatus::Unavailable, snapshot.bdb_version.status);
-        assert_eq!(None, snapshot.bdb_version.value);
-        assert_eq!(
-            Some("version probe failed"),
-            snapshot.bdb_version.detail.as_deref()
-        );
+        assert_eq!(None, snapshot.board_os_version);
     }
 
     #[test]
@@ -555,12 +880,27 @@ mod tests {
 
         assert_eq!(DeviceStatusKind::ExecutionError, snapshot.status);
         assert!(snapshot.guidance.contains("Refresh the connection check"));
+        assert_eq!(
+            current_poll_interval_ms().max(BACKGROUND_DEVICE_STATUS_POLL_INTERVAL_MS),
+            snapshot.poll_interval_ms
+        );
     }
 
     fn runnable_snapshot_with_runner(runner: StaticRunner) -> DeviceStatusSnapshot {
         load_device_status_snapshot_with_runner(
             &sample_tool_state(BdbToolStatus::Runnable, BdbRunnableStatus::Runnable),
             &runner,
+        )
+    }
+
+    fn runnable_snapshot_with_runner_and_session(
+        runner: StaticRunner,
+        session: &Mutex<DeviceStatusSession>,
+    ) -> DeviceStatusSnapshot {
+        load_device_status_snapshot_with_runner_and_session(
+            &sample_tool_state(BdbToolStatus::Runnable, BdbRunnableStatus::Runnable),
+            &runner,
+            session,
         )
     }
 
@@ -606,15 +946,15 @@ mod tests {
             version_check: BdbToolVersionCheck {
                 status: BdbToolVersionStatus::Available,
                 command: "/tmp/bdb version".into(),
-                value: Some("Board OS Version: 1.8.1".into()),
+                value: Some("bdb 0.19.0".into()),
                 exit_code: Some(0),
-                summary: "Installed version: Board OS Version: 1.8.1".into(),
+                summary: "Installed version: bdb 0.19.0".into(),
                 detail: None,
             },
             update_status: BdbUpdateStatus {
                 status: BdbUpdateStatusKind::UpToDate,
-                current_version: Some("Board OS Version: 1.8.1".into()),
-                available_version: Some("Board OS Version: 1.8.1".into()),
+                current_version: Some("bdb 0.19.0".into()),
+                available_version: Some("bdb 0.19.0".into()),
                 guidance:
                     "This Board Install Tool matches the latest version in BE Home's source list."
                         .into(),

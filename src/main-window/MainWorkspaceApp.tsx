@@ -30,12 +30,8 @@ import type {
   UninstallInstalledTitleResult,
 } from "../desktop/types";
 import { formatBoardInstallToolVersion } from "../desktop/presentation";
-import {
-  MAIN_WORKSPACE_NAVIGATE_EVENT,
-  MAIN_WORKSPACE_RESCAN_EVENT,
-  SETTINGS_UPDATED_EVENT,
-  type MainWorkspaceNavigationEvent,
-} from "../desktop-shell/constants";
+import { SETTINGS_UPDATED_EVENT } from "../desktop-shell/constants";
+import MainWindowTitleBar from "../desktop-shell/MainWindowTitleBar";
 
 type WorkspaceSectionId = "gamesAndApps" | "installedOnBoard";
 type NoticeTone = "success" | "warning" | "neutral";
@@ -162,6 +158,7 @@ export default function MainWorkspaceApp() {
   const [gamesAndAppsLoaded, setGamesAndAppsLoaded] = useState(false);
   const [installedLoaded, setInstalledLoaded] = useState(false);
   const apkInstallInFlightRef = useRef(false);
+  const deviceStatusInFlightRef = useRef(false);
 
   useEffect(() => {
     void refreshSetupGateState();
@@ -230,6 +227,12 @@ export default function MainWorkspaceApp() {
         return;
       }
 
+      if (deviceStatusInFlightRef.current) {
+        return;
+      }
+
+      deviceStatusInFlightRef.current = true;
+
       if (source !== "poll") {
         setDeviceState((previous) => ({
           ...previous,
@@ -257,6 +260,8 @@ export default function MainWorkspaceApp() {
               ? "It will keep trying again while the window stays visible."
               : "Please try again in a moment.",
         }));
+      } finally {
+        deviceStatusInFlightRef.current = false;
       }
     },
   );
@@ -371,6 +376,7 @@ export default function MainWorkspaceApp() {
   const devicePollIntervalMs =
     deviceState.snapshot?.pollIntervalMs ??
     (desktopSettings?.boardConnection.pollIntervalSeconds ?? 5) * 1000;
+
   useEffect(() => {
     if (setupGateState?.status !== "ready") {
       setDeviceState({
@@ -387,6 +393,13 @@ export default function MainWorkspaceApp() {
     }
 
     void refreshDeviceStatus("initial");
+  }, [documentVisible, setupGateState?.status, windowFocused]);
+
+  useEffect(() => {
+    if (setupGateState?.status !== "ready" || !documentVisible || !windowFocused) {
+      return;
+    }
+
     const timer = window.setInterval(() => {
       void refreshDeviceStatus("poll");
     }, devicePollIntervalMs);
@@ -413,16 +426,6 @@ export default function MainWorkspaceApp() {
     }
   }, [activeSectionId, gamesAndAppsLoaded, installedLoaded, setupGateState?.status]);
 
-  const handleShellNavigation = useEffectEvent((payload: MainWorkspaceNavigationEvent) => {
-    setActiveSectionId(payload.target);
-  });
-
-  const handleShellRescan = useEffectEvent(() => {
-    setActiveSectionId("gamesAndApps");
-    void refreshApkDiscovery("manual");
-    void refreshManagedLibrary("manual");
-  });
-
   const handleSettingsUpdated = useEffectEvent(() => {
     void refreshSetupGateState();
     void refreshDesktopSettings();
@@ -438,33 +441,24 @@ export default function MainWorkspaceApp() {
 
   useEffect(() => {
     let mounted = true;
-    let unlistenFunctions: Array<() => void> = [];
+    let removeSettingsListener: (() => void) | null = null;
 
-    void Promise.all([
-      listen<MainWorkspaceNavigationEvent>(MAIN_WORKSPACE_NAVIGATE_EVENT, ({ payload }) => {
-        handleShellNavigation(payload);
-      }),
-      listen(MAIN_WORKSPACE_RESCAN_EVENT, () => {
-        handleShellRescan();
-      }),
-      listen(SETTINGS_UPDATED_EVENT, () => {
-        handleSettingsUpdated();
-      }),
-    ]).then((unlisten) => {
-      if (mounted) {
-        unlistenFunctions = unlisten;
-        return;
-      }
+    void listen(SETTINGS_UPDATED_EVENT, () => {
+      handleSettingsUpdated();
+    })
+      .then((unlisten) => {
+        if (mounted) {
+          removeSettingsListener = unlisten;
+          return;
+        }
 
-      for (const removeListener of unlisten) {
-        removeListener();
-      }
-    });
+        unlisten();
+      });
 
     return () => {
       mounted = false;
-      for (const removeListener of unlistenFunctions) {
-        removeListener();
+      if (removeSettingsListener !== null) {
+        removeSettingsListener();
       }
     };
   }, []);
@@ -707,9 +701,8 @@ export default function MainWorkspaceApp() {
   if (windowError !== null) {
     return (
       <main className="page-shell desktop-shell">
-        <section className="page-grid narrow">
-          <section className="panel desktop-state-card" aria-live="polite">
-            <div className="eyebrow">BE Home for Desktop</div>
+        <section className="desktop-grid">
+          <section className="desktop-state-view" aria-live="polite">
             <h2>Please close the app and try again.</h2>
             <p className="panel-description">{windowError}</p>
           </section>
@@ -721,9 +714,8 @@ export default function MainWorkspaceApp() {
   if (setupGateState === null) {
     return (
       <main className="page-shell desktop-shell">
-        <section className="page-grid narrow">
-          <section className="panel desktop-state-card" aria-live="polite">
-            <div className="eyebrow">Opening BE Home for Desktop</div>
+        <section className="desktop-grid">
+          <section className="desktop-state-view" aria-live="polite">
             <h2>Getting your desktop workspace ready</h2>
             <p className="panel-description">
               BE Home is checking your setup and Board status.
@@ -737,9 +729,8 @@ export default function MainWorkspaceApp() {
   if (setupGateState.status !== "ready") {
     return (
       <main className="page-shell desktop-shell">
-        <section className="page-grid narrow">
-          <section className="panel desktop-state-card desktop-inline-message--warning" aria-live="polite">
-            <div className="eyebrow">Setup Needed</div>
+        <section className="desktop-grid">
+          <section className="desktop-state-view desktop-state-view--warning" aria-live="polite">
             <h2>Finish setup in the Setup Wizard first.</h2>
             <p className="panel-description">{setupGateState.summary}</p>
             <div className="desktop-inline-button-row">
@@ -755,90 +746,87 @@ export default function MainWorkspaceApp() {
 
   return (
     <main className="page-shell desktop-shell desktop-shell--workspace">
-      <section className="page-grid desktop-grid">
-        <section className="panel desktop-app-shell">
-          <header className="desktop-app-header">
-            <div className="desktop-app-heading">
-              <div className="eyebrow">BE Home for Desktop</div>
-              <h1>Keep your Board installs close by.</h1>
-              <p className="panel-description">
-                Choose between the files on this computer and what is already installed on your
-                Board.
-              </p>
-            </div>
-          </header>
+      <MainWindowTitleBar
+        activeSection={activeSectionId}
+        onNavigate={setActiveSectionId}
+        onRescanGamesAndApps={() => {
+          setActiveSectionId("gamesAndApps");
+          void refreshApkDiscovery("manual");
+          void refreshManagedLibrary("manual");
+        }}
+      />
 
-          <section className="desktop-status-strip" aria-label="Board status">
-            <span className={`desktop-status-chip desktop-status-chip--${boardStatus.tone}`}>
-              {boardStatus.label}
+      <section className="desktop-app-shell">
+        <section className="desktop-status-strip" aria-label="Board status">
+          <span className={`desktop-status-chip desktop-status-chip--${boardStatus.tone}`}>
+            {boardStatus.label}
+          </span>
+          <div className="desktop-help-chip-wrap">
+            <button
+              aria-describedby="board-status-help-tooltip"
+              aria-label="What this Board status means"
+              className="desktop-help-chip"
+              type="button"
+            >
+              ?
+            </button>
+            <span className="desktop-help-tooltip" id="board-status-help-tooltip" role="tooltip">
+              {boardStatus.tooltip}
             </span>
-            <div className="desktop-help-chip-wrap">
+          </div>
+          <StatusValueChip label="bdb" value={bdbVersionValue} />
+          <StatusValueChip label="Board OS" value={boardOsVersionValue} />
+        </section>
+
+        <section className="desktop-main-layout">
+          <aside className="desktop-sidebar" aria-label="Workspace sections">
+            {workspaceSections.map((section) => (
               <button
-                aria-describedby="board-status-help-tooltip"
-                aria-label="What this Board status means"
-                className="desktop-help-chip"
+                className={
+                  section.id === activeSectionId
+                    ? "desktop-sidebar-button desktop-sidebar-button--active"
+                    : "desktop-sidebar-button"
+                }
+                key={section.id}
+                onClick={() => setActiveSectionId(section.id)}
                 type="button"
               >
-                ?
+                <span className="desktop-sidebar-button-label">{section.label}</span>
+                <span className="desktop-sidebar-button-summary">{section.summary}</span>
               </button>
-              <span className="desktop-help-tooltip" id="board-status-help-tooltip" role="tooltip">
-                {boardStatus.tooltip}
-              </span>
-            </div>
-            <StatusValueChip label="bdb" value={bdbVersionValue} />
-            <StatusValueChip label="Board OS" value={boardOsVersionValue} />
-          </section>
+            ))}
+          </aside>
 
-          <section className="desktop-main-layout">
-            <aside className="desktop-sidebar" aria-label="Workspace sections">
-              {workspaceSections.map((section) => (
-                <button
-                  className={
-                    section.id === activeSectionId
-                      ? "desktop-sidebar-button desktop-sidebar-button--active"
-                      : "desktop-sidebar-button"
-                  }
-                  key={section.id}
-                  onClick={() => setActiveSectionId(section.id)}
-                  type="button"
-                >
-                  <span className="desktop-sidebar-button-label">{section.label}</span>
-                  <span className="desktop-sidebar-button-summary">{section.summary}</span>
-                </button>
-              ))}
-            </aside>
-
-            <section className="desktop-main-content">
-              {activeSectionId === "gamesAndApps" ? (
-                <GamesAndAppsSection
-                  apkDiscoveryState={apkDiscoveryState}
-                  apkInstallState={apkInstallState}
-                  desktopSettings={desktopSettings}
-                  managedLibraryState={managedLibraryState}
-                  onChooseManualApk={() => void handleChooseManualApk()}
-                  onImportCandidate={(sourcePath) => void handleImportApkIntoManagedLibrary(sourcePath)}
-                  onInstallApk={(apkPath) => void handleInstallApk(apkPath)}
-                  onRescan={() => {
-                    void refreshApkDiscovery("manual");
-                    void refreshManagedLibrary("manual");
-                  }}
-                />
-              ) : (
-                <InstalledOnBoardSection
-                  installedTitleActionState={installedTitleActionState}
-                  installedTitlesState={installedTitlesState}
-                  onCancelUninstall={handleCancelUninstall}
-                  onLaunchTitle={(packageName, displayName) =>
-                    void handleLaunchInstalledTitle(packageName, displayName)
-                  }
-                  onRefresh={() => void refreshInstalledTitles("manual")}
-                  onRequestUninstall={handleRequestUninstall}
-                  onUninstallTitle={(packageName, displayName) =>
-                    void handleUninstallInstalledTitle(packageName, displayName)
-                  }
-                />
-              )}
-            </section>
+          <section className="desktop-main-content">
+            {activeSectionId === "gamesAndApps" ? (
+              <GamesAndAppsSection
+                apkDiscoveryState={apkDiscoveryState}
+                apkInstallState={apkInstallState}
+                desktopSettings={desktopSettings}
+                managedLibraryState={managedLibraryState}
+                onChooseManualApk={() => void handleChooseManualApk()}
+                onImportCandidate={(sourcePath) => void handleImportApkIntoManagedLibrary(sourcePath)}
+                onInstallApk={(apkPath) => void handleInstallApk(apkPath)}
+                onRescan={() => {
+                  void refreshApkDiscovery("manual");
+                  void refreshManagedLibrary("manual");
+                }}
+              />
+            ) : (
+              <InstalledOnBoardSection
+                installedTitleActionState={installedTitleActionState}
+                installedTitlesState={installedTitlesState}
+                onCancelUninstall={handleCancelUninstall}
+                onLaunchTitle={(packageName, displayName) =>
+                  void handleLaunchInstalledTitle(packageName, displayName)
+                }
+                onRefresh={() => void refreshInstalledTitles("manual")}
+                onRequestUninstall={handleRequestUninstall}
+                onUninstallTitle={(packageName, displayName) =>
+                  void handleUninstallInstalledTitle(packageName, displayName)
+                }
+              />
+            )}
           </section>
         </section>
       </section>
@@ -898,7 +886,6 @@ function GamesAndAppsSection({
     <section className="desktop-section-stack">
       <section className="desktop-section-header">
         <div>
-          <div className="eyebrow">Games &amp; Apps</div>
           <h2>Choose a game or app from this computer.</h2>
           <p className="panel-description">
             BE Home can check your chosen folders, keep saved copies in one library, or let you
@@ -946,7 +933,6 @@ function GamesAndAppsSection({
 
       <section className="desktop-two-column-grid">
         <article className="desktop-content-card">
-          <div className="eyebrow">Found on This Computer</div>
           <h3>Folders BE Home can already see</h3>
           <p className="desktop-section-copy">
             {scanFolderCount === 0
@@ -1011,7 +997,6 @@ function GamesAndAppsSection({
         </article>
 
         <article className="desktop-content-card">
-          <div className="eyebrow">Chosen Manually</div>
           <h3>Use any game or app file you already trust.</h3>
           <p className="desktop-section-copy">
             If you already know which file you want, you can choose it directly even when no scan
@@ -1072,7 +1057,6 @@ function GamesAndAppsSection({
       </section>
 
       <article className="desktop-content-card">
-        <div className="eyebrow">Saved Library</div>
         <h3>Saved copies you can reuse later</h3>
         <p className="desktop-section-copy">
           BE Home keeps saved copies here so reinstalling later takes fewer steps.
@@ -1155,7 +1139,6 @@ function InstalledOnBoardSection({
     <section className="desktop-section-stack">
       <section className="desktop-section-header">
         <div>
-          <div className="eyebrow">Installed on Board</div>
           <h2>Review what is already on your Board.</h2>
           <p className="panel-description">
             Open a game that is ready to launch, or remove something you no longer want on the
@@ -1188,7 +1171,6 @@ function InstalledOnBoardSection({
       ) : null}
 
       <article className="desktop-content-card">
-        <div className="eyebrow">Current List</div>
         <h3>Titles BE Home can read right now</h3>
         <p className="desktop-section-copy">
           BE Home keeps launch and remove actions next to the title they affect.

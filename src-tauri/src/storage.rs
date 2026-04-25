@@ -111,6 +111,7 @@ struct PersistedDesktopSettings {
     apk_library_override: Option<String>,
     board_connection_poll_interval_seconds: Option<u32>,
     scan_folder_paths: Option<Vec<String>>,
+    setup_completed: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -133,6 +134,16 @@ pub(crate) fn load_desktop_settings() -> Result<DesktopSettings, String> {
     let context = current_storage_context()?;
     let persisted = load_persisted_settings(&context.settings_file_path)?;
     Ok(build_desktop_settings(&context, &persisted))
+}
+
+/// Load whether the player has finished the setup wizard on this computer.
+pub(crate) fn load_setup_completed() -> Result<bool, String> {
+    let context = current_storage_context()?;
+    let persisted = load_persisted_settings(&context.settings_file_path)?;
+    Ok(resolve_setup_completed(
+        &context.settings_file_path,
+        &persisted,
+    ))
 }
 
 /// Resolve the app-owned root directory used for desktop settings, tools, and cached files.
@@ -171,6 +182,14 @@ pub(crate) fn save_desktop_settings(
     Ok(build_desktop_settings(&context, &persisted))
 }
 
+/// Persist whether the player has finished the setup wizard.
+pub(crate) fn save_setup_completed(setup_completed: bool) -> Result<(), String> {
+    let context = current_storage_context()?;
+    let mut persisted = load_persisted_settings(&context.settings_file_path)?;
+    persisted.setup_completed = Some(setup_completed);
+    save_persisted_settings(&context.settings_file_path, &persisted)
+}
+
 fn build_managed_storage_settings(
     context: &ManagedStorageContext,
     persisted: &PersistedDesktopSettings,
@@ -193,7 +212,7 @@ fn build_desktop_settings(
     persisted: &PersistedDesktopSettings,
 ) -> DesktopSettings {
     let managed_storage = build_managed_storage_settings(context, persisted);
-        DesktopSettings {
+    DesktopSettings {
         operating_system: managed_storage.operating_system,
         settings_file_path: managed_storage.settings_file_path.clone(),
         bdb_tools: managed_storage.bdb_tools.clone(),
@@ -283,13 +302,20 @@ fn normalize_loaded_scan_folder_paths(values: &[String]) -> Vec<String> {
     normalized
 }
 
-fn resolve_board_connection_poll_interval_seconds(
-    persisted: &PersistedDesktopSettings,
-) -> u32 {
+fn resolve_board_connection_poll_interval_seconds(persisted: &PersistedDesktopSettings) -> u32 {
     persisted
         .board_connection_poll_interval_seconds
         .filter(|value| BOARD_CONNECTION_POLL_INTERVAL_OPTIONS.contains(value))
         .unwrap_or(DEFAULT_BOARD_CONNECTION_POLL_INTERVAL_SECONDS)
+}
+
+fn resolve_setup_completed(
+    settings_file_path: &Path,
+    persisted: &PersistedDesktopSettings,
+) -> bool {
+    persisted
+        .setup_completed
+        .unwrap_or_else(|| settings_file_path.exists())
 }
 
 fn normalize_board_connection_poll_interval(
@@ -539,14 +565,24 @@ mod tests {
     use super::{
         build_desktop_settings, build_managed_storage_settings,
         current_storage_context_from_environment, load_persisted_settings, normalize_override,
-        normalize_scan_folder_paths, save_desktop_settings, save_managed_storage_settings,
-        save_persisted_settings, DesktopSettingsInput,
-        DEFAULT_BOARD_CONNECTION_POLL_INTERVAL_SECONDS, ManagedStorageContext,
-        ManagedStorageOverridesInput, PersistedDesktopSettings, StorageOperatingSystem,
+        normalize_scan_folder_paths, resolve_setup_completed, save_desktop_settings,
+        save_managed_storage_settings, save_persisted_settings, save_setup_completed,
+        DesktopSettingsInput, ManagedStorageContext, ManagedStorageOverridesInput,
+        PersistedDesktopSettings, StorageOperatingSystem,
+        DEFAULT_BOARD_CONNECTION_POLL_INTERVAL_SECONDS,
     };
     use std::collections::BTreeMap;
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, MutexGuard};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn lock_env() -> MutexGuard<'static, ()> {
+        ENV_LOCK
+            .lock()
+            .expect("environment lock should be available")
+    }
 
     fn sample_tools_override_path() -> String {
         if cfg!(target_os = "windows") {
@@ -705,6 +741,7 @@ mod tests {
             apk_library_override: Some(sample_apk_library_override_path()),
             board_connection_poll_interval_seconds: Some(30),
             scan_folder_paths: Some(vec![sample_scan_folder_path()]),
+            setup_completed: None,
         };
 
         save_persisted_settings(&context.settings_file_path, &persisted)
@@ -740,6 +777,7 @@ mod tests {
             apk_library_override: Some(sample_apk_library_override_path()),
             board_connection_poll_interval_seconds: Some(12),
             scan_folder_paths: Some(vec!["relative/Downloads".into()]),
+            setup_completed: None,
         };
 
         let settings = build_managed_storage_settings(&context, &persisted);
@@ -778,11 +816,15 @@ mod tests {
                 .and_then(|value| value.as_str())
                 .expect("source should serialize")
         );
-        assert_eq!(DEFAULT_BOARD_CONNECTION_POLL_INTERVAL_SECONDS, settings.board_connection.poll_interval_seconds);
+        assert_eq!(
+            DEFAULT_BOARD_CONNECTION_POLL_INTERVAL_SECONDS,
+            settings.board_connection.poll_interval_seconds
+        );
     }
 
     #[test]
     fn save_desktop_settings_persists_scan_folders_and_library_override() {
+        let _guard = lock_env();
         let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
         let previous_home = std::env::var_os("HOME");
         let previous_local_app_data = std::env::var_os("LOCALAPPDATA");
@@ -822,7 +864,91 @@ mod tests {
     }
 
     #[test]
+    fn existing_settings_file_defaults_setup_completion_to_true_for_migration() {
+        let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let context = sample_context(temp_directory.path());
+
+        save_persisted_settings(
+            &context.settings_file_path,
+            &PersistedDesktopSettings {
+                bdb_tools_override: None,
+                apk_library_override: None,
+                board_connection_poll_interval_seconds: None,
+                scan_folder_paths: Some(vec![sample_scan_folder_path()]),
+                setup_completed: None,
+            },
+        )
+        .expect("seed settings should save");
+
+        let persisted =
+            load_persisted_settings(&context.settings_file_path).expect("settings should load");
+        let result = resolve_setup_completed(&context.settings_file_path, &persisted);
+
+        assert!(result);
+    }
+
+    #[test]
+    fn save_setup_completed_persists_false_until_the_wizard_finishes() {
+        let _guard = lock_env();
+        let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let previous_home = std::env::var_os("HOME");
+        let previous_local_app_data = std::env::var_os("LOCALAPPDATA");
+        let previous_user_profile = std::env::var_os("USERPROFILE");
+
+        if cfg!(target_os = "windows") {
+            unsafe {
+                std::env::set_var("LOCALAPPDATA", temp_directory.path().join("local-app-data"));
+                std::env::set_var("USERPROFILE", temp_directory.path().join("home"));
+            }
+        } else {
+            unsafe {
+                std::env::set_var("HOME", temp_directory.path().join("home"));
+            }
+        }
+
+        let settings_file_path = if cfg!(target_os = "windows") {
+            temp_directory
+                .path()
+                .join("local-app-data")
+                .join("Board Enthusiasts")
+                .join("BE Home for Desktop")
+                .join("settings")
+                .join("managed-storage.json")
+        } else {
+            temp_directory
+                .path()
+                .join("home")
+                .join(".local")
+                .join("share")
+                .join("Board Enthusiasts")
+                .join("BE Home for Desktop")
+                .join("settings")
+                .join("managed-storage.json")
+        };
+
+        save_setup_completed(false).expect("setup completion should save");
+        let incomplete = load_persisted_settings(&settings_file_path)
+            .expect("setup completion should load")
+            .setup_completed;
+
+        save_setup_completed(true).expect("setup completion should save");
+        let complete = load_persisted_settings(&settings_file_path)
+            .expect("setup completion should load")
+            .setup_completed;
+
+        restore_env(
+            previous_home,
+            previous_local_app_data,
+            previous_user_profile,
+        );
+
+        assert_eq!(Some(false), incomplete);
+        assert_eq!(Some(true), complete);
+    }
+
+    #[test]
     fn saving_managed_storage_keeps_existing_scan_folders() {
+        let _guard = lock_env();
         let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
         let settings_file_path = temp_directory
             .path()
@@ -850,6 +976,7 @@ mod tests {
                 apk_library_override: None,
                 board_connection_poll_interval_seconds: None,
                 scan_folder_paths: Some(vec![sample_scan_folder_path()]),
+                setup_completed: None,
             },
         )
         .expect("seed settings should save");

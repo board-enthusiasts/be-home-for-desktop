@@ -1,11 +1,11 @@
-use crate::{bdb_tool, device};
+use crate::{bdb_tool, device, process_runner};
 use serde::Serialize;
 use std::collections::BTreeSet;
-use std::io;
 use std::path::Path;
-use std::process::Command;
+use std::time::Duration;
 
 const BDB_LIST_ARGUMENT: &str = "list";
+const BDB_LIST_TIMEOUT_SECONDS: u64 = 10;
 
 /// Describes whether the installed-title inventory is ready, empty, or temporarily unavailable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -74,15 +74,17 @@ impl ProcessRunner for CommandProcessRunner {
         executable_path: &Path,
         args: &[&str],
     ) -> Result<ProcessRunOutput, ProcessRunFailure> {
-        let output = Command::new(executable_path)
-            .args(args)
-            .output()
-            .map_err(classify_process_failure)?;
+        let output = process_runner::run_with_timeout(
+            executable_path,
+            args,
+            Duration::from_secs(BDB_LIST_TIMEOUT_SECONDS),
+        )
+        .map_err(map_process_failure)?;
 
         Ok(ProcessRunOutput {
-            exit_code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            exit_code: output.exit_code,
+            stdout: output.stdout,
+            stderr: output.stderr,
         })
     }
 }
@@ -186,8 +188,7 @@ fn normalize_list_output(output: ProcessRunOutput) -> InstalledTitlesSnapshot {
             status: InstalledTitlesStatus::Unavailable,
             summary: "BE Home could not finish reading the installed-title list from Board yet."
                 .into(),
-            guidance:
-                "Reconnect Board if needed, then refresh the installed titles again.".into(),
+            guidance: "Reconnect Board if needed, then refresh the installed titles again.".into(),
             titles: Vec::new(),
         };
     }
@@ -250,7 +251,11 @@ fn parse_installed_title_line(index: usize, line: &str) -> Option<InstalledTitle
 
     let package_name = extract_package_name(normalized_line);
     let display_name = normalize_display_name(normalized_line, package_name.as_deref());
-    if package_name.is_none() && !display_name.chars().any(|character| character.is_ascii_alphanumeric()) {
+    if package_name.is_none()
+        && !display_name
+            .chars()
+            .any(|character| character.is_ascii_alphanumeric())
+    {
         return None;
     }
     let stable_id = build_stable_id(&display_name, package_name.as_deref(), index);
@@ -299,7 +304,10 @@ fn extract_parenthetical_package(line: &str) -> Option<String> {
 
 fn normalize_package_candidate(token: &str) -> Option<String> {
     let trimmed = token.trim_matches(|character: char| {
-        matches!(character, ',' | ';' | '|' | '(' | ')' | '[' | ']' | '"' | '\'')
+        matches!(
+            character,
+            ',' | ';' | '|' | '(' | ')' | '[' | ']' | '"' | '\''
+        )
     });
     if trimmed.is_empty() {
         return None;
@@ -420,13 +428,19 @@ fn looks_like_package_name(value: &str) -> bool {
         return false;
     }
 
-    value.chars().all(|character| {
-        character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-')
-    }) && value.chars().any(|character| character.is_ascii_lowercase())
+    value
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-'))
+        && value
+            .chars()
+            .any(|character| character.is_ascii_lowercase())
 }
 
 fn trim_inventory_prefix(line: &str) -> &str {
-    let digits = line.chars().take_while(|character| character.is_ascii_digit()).count();
+    let digits = line
+        .chars()
+        .take_while(|character| character.is_ascii_digit())
+        .count();
     if digits == 0 {
         return line;
     }
@@ -450,16 +464,19 @@ fn combined_output_text(output: &ProcessRunOutput) -> String {
         .join("\n")
 }
 
-fn classify_process_failure(error: io::Error) -> ProcessRunFailure {
-    let kind = match error.kind() {
-        io::ErrorKind::PermissionDenied => ProcessRunFailureKind::PermissionDenied,
-        io::ErrorKind::NotFound => ProcessRunFailureKind::NotFound,
-        _ => ProcessRunFailureKind::Other,
+fn map_process_failure(failure: process_runner::ProcessCommandFailure) -> ProcessRunFailure {
+    let kind = match failure.kind {
+        process_runner::ProcessCommandFailureKind::PermissionDenied => {
+            ProcessRunFailureKind::PermissionDenied
+        }
+        process_runner::ProcessCommandFailureKind::NotFound => ProcessRunFailureKind::NotFound,
+        process_runner::ProcessCommandFailureKind::TimedOut
+        | process_runner::ProcessCommandFailureKind::Other => ProcessRunFailureKind::Other,
     };
 
     ProcessRunFailure {
         kind,
-        _detail: error.to_string(),
+        _detail: failure.detail,
     }
 }
 
@@ -502,7 +519,10 @@ mod tests {
         let titles = parse_installed_titles("co.board.luckydice\ncom.example.familymatch");
 
         assert_eq!(2, titles.len());
-        assert_eq!(Some("co.board.luckydice"), titles[0].package_name.as_deref());
+        assert_eq!(
+            Some("co.board.luckydice"),
+            titles[0].package_name.as_deref()
+        );
         assert_eq!("co.board.luckydice", titles[0].display_name);
     }
 
@@ -512,7 +532,10 @@ mod tests {
 
         assert_eq!(1, titles.len());
         assert_eq!("Lucky Dice", titles[0].display_name);
-        assert_eq!(Some("co.board.luckydice"), titles[0].package_name.as_deref());
+        assert_eq!(
+            Some("co.board.luckydice"),
+            titles[0].package_name.as_deref()
+        );
         assert!(titles[0].can_launch);
     }
 
@@ -536,7 +559,8 @@ mod tests {
             &StaticRunner {
                 result: Ok(ProcessRunOutput {
                     exit_code: Some(0),
-                    stdout: "Lucky Dice (co.board.luckydice)\nFamily Match | fun.board.familymatch".into(),
+                    stdout: "Lucky Dice (co.board.luckydice)\nFamily Match | fun.board.familymatch"
+                        .into(),
                     stderr: String::new(),
                 }),
             },
@@ -544,7 +568,10 @@ mod tests {
 
         assert_eq!(InstalledTitlesStatus::Ready, snapshot.status);
         assert_eq!(2, snapshot.titles.len());
-        assert_eq!(Some("co.board.luckydice"), snapshot.titles[0].package_name.as_deref());
+        assert_eq!(
+            Some("co.board.luckydice"),
+            snapshot.titles[0].package_name.as_deref()
+        );
     }
 
     #[test]

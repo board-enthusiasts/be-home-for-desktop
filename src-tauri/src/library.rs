@@ -104,7 +104,12 @@ pub(crate) fn import_apk_to_managed_library(
     let library_root = PathBuf::from(&settings.apk_library.effective_path);
     let manifest_path = resolve_library_manifest_path()?;
 
-    import_apk_to_managed_library_at(&manifest_path, &library_root, &source_path, source_candidate)
+    import_apk_to_managed_library_at(
+        &manifest_path,
+        &library_root,
+        &source_path,
+        source_candidate,
+    )
 }
 
 fn import_apk_to_managed_library_at(
@@ -120,7 +125,8 @@ fn import_apk_to_managed_library_at(
         .items
         .iter()
         .find(|item| {
-            item.stable_id == derived_stable_id || path_identity_key(&item.managed_path) == source_key
+            item.stable_id == derived_stable_id
+                || path_identity_key(&item.managed_path) == source_key
         })
         .cloned();
     let stable_id = existing_item
@@ -136,7 +142,9 @@ fn import_apk_to_managed_library_at(
         library_root,
         &source_candidate.file_name,
         source_path,
-        existing_item.as_ref().map(|item| item.managed_path.as_str()),
+        existing_item
+            .as_ref()
+            .map(|item| item.managed_path.as_str()),
         &occupied_managed_paths,
     );
     let managed_path_string = path_to_string(&managed_path);
@@ -190,9 +198,15 @@ fn import_apk_to_managed_library_at(
 
     Ok(ManagedApkLibraryImportResult {
         summary: if source_and_destination_match {
-            format!("BE Home added {} to the managed APK library.", item.file_name)
+            format!(
+                "BE Home added {} to the managed APK library.",
+                item.file_name
+            )
         } else {
-            format!("BE Home copied {} into the managed APK library.", item.file_name)
+            format!(
+                "BE Home copied {} into the managed APK library.",
+                item.file_name
+            )
         },
         guidance: if source_and_destination_match {
             "The APK was already inside the managed library folder, so BE Home kept it in place and added it to the reusable inventory."
@@ -218,7 +232,11 @@ fn build_library_snapshot(
         right
             .imported_at_unix_ms
             .cmp(&left.imported_at_unix_ms)
-            .then_with(|| left.file_name.to_ascii_lowercase().cmp(&right.file_name.to_ascii_lowercase()))
+            .then_with(|| {
+                left.file_name
+                    .to_ascii_lowercase()
+                    .cmp(&right.file_name.to_ascii_lowercase())
+            })
             .then_with(|| left.managed_path.cmp(&right.managed_path))
     });
 
@@ -442,8 +460,7 @@ const fn library_manifest_schema_version() -> u32 {
 mod tests {
     use super::{
         build_library_snapshot, import_apk_to_managed_library_at, load_persisted_library_manifest,
-        ManagedApkLibraryImportResult, ManagedApkLibraryStatus,
-        PersistedManagedApkLibraryManifest,
+        ManagedApkLibraryImportResult, ManagedApkLibraryStatus, PersistedManagedApkLibraryManifest,
     };
     use std::fs::{self, File};
     use std::io::Write;
@@ -454,7 +471,10 @@ mod tests {
     #[test]
     fn import_copies_the_apk_into_the_managed_library_and_keeps_the_source_file() {
         let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
-        let manifest_path = temp_directory.path().join("settings").join("managed-apk-library.json");
+        let manifest_path = temp_directory
+            .path()
+            .join("settings")
+            .join("managed-apk-library.json");
         let library_root = temp_directory.path().join("apk-library");
         let source_root = temp_directory.path().join("downloads");
         fs::create_dir_all(&source_root).expect("source root should exist");
@@ -480,7 +500,10 @@ mod tests {
     #[test]
     fn import_reuses_the_existing_manifest_entry_for_the_same_source_path() {
         let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
-        let manifest_path = temp_directory.path().join("settings").join("managed-apk-library.json");
+        let manifest_path = temp_directory
+            .path()
+            .join("settings")
+            .join("managed-apk-library.json");
         let library_root = temp_directory.path().join("apk-library");
         let source_root = temp_directory.path().join("downloads");
         fs::create_dir_all(&source_root).expect("source root should exist");
@@ -491,7 +514,10 @@ mod tests {
         let second_result = import_candidate(&manifest_path, &library_root, &source_path);
 
         assert_eq!(first_result.item.stable_id, second_result.item.stable_id);
-        assert_eq!(first_result.item.managed_path, second_result.item.managed_path);
+        assert_eq!(
+            first_result.item.managed_path,
+            second_result.item.managed_path
+        );
 
         let manifest =
             load_persisted_library_manifest(&manifest_path).expect("manifest should load");
@@ -501,7 +527,10 @@ mod tests {
     #[test]
     fn import_reusing_a_managed_copy_keeps_one_library_entry() {
         let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
-        let manifest_path = temp_directory.path().join("settings").join("managed-apk-library.json");
+        let manifest_path = temp_directory
+            .path()
+            .join("settings")
+            .join("managed-apk-library.json");
         let library_root = temp_directory.path().join("apk-library");
         let source_root = temp_directory.path().join("downloads");
         fs::create_dir_all(&source_root).expect("source root should exist");
@@ -513,7 +542,10 @@ mod tests {
         let second_result = import_candidate(&manifest_path, &library_root, &managed_copy_path);
 
         assert_eq!(first_result.item.stable_id, second_result.item.stable_id);
-        assert_eq!(first_result.item.managed_path, second_result.item.managed_path);
+        assert_eq!(
+            first_result.item.managed_path,
+            second_result.item.managed_path
+        );
         assert_eq!(
             first_result.item.original_source_path,
             second_result.item.original_source_path
@@ -527,7 +559,10 @@ mod tests {
             first_result.item.original_source_path,
             manifest.items[0].original_source_path
         );
-        assert_eq!(first_result.item.managed_path, manifest.items[0].managed_path);
+        assert_eq!(
+            first_result.item.managed_path,
+            manifest.items[0].managed_path
+        );
     }
 
     #[test]
@@ -556,7 +591,10 @@ mod tests {
     #[test]
     fn import_tracks_confidence_package_and_timestamps() {
         let temp_directory = tempfile::tempdir().expect("temporary directory should exist");
-        let manifest_path = temp_directory.path().join("settings").join("managed-apk-library.json");
+        let manifest_path = temp_directory
+            .path()
+            .join("settings")
+            .join("managed-apk-library.json");
         let library_root = temp_directory.path().join("apk-library");
         let source_root = temp_directory.path().join("downloads");
         fs::create_dir_all(&source_root).expect("source root should exist");
@@ -569,7 +607,10 @@ mod tests {
             Some("fun.board.familymatch"),
             result.item.package_name.as_deref()
         );
-        assert_eq!(crate::apk::ApkConfidence::PossibleMatch, result.item.confidence);
+        assert_eq!(
+            crate::apk::ApkConfidence::PossibleMatch,
+            result.item.confidence
+        );
         assert!(result.item.imported_at_unix_ms > 0);
         assert!(result.item.source_modified_at_unix_ms.is_some());
         assert!(result.item.managed_modified_at_unix_ms.is_some());
@@ -589,8 +630,7 @@ mod tests {
     fn write_apk(path: &Path, include_strong_marker: bool, package_name: &str) {
         let file = File::create(path).expect("apk file should create");
         let mut writer = ZipWriter::new(file);
-        let options =
-            SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
 
         writer
             .start_file("AndroidManifest.xml", options)
