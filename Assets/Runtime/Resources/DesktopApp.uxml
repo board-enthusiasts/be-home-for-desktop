@@ -1,0 +1,217 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements">
+    <ui:VisualElement name="app-root" class="be-screen desktop-root">
+        <ui:VisualElement class="desktop-toolbar">
+            <ui:VisualElement class="desktop-brand">
+                <ui:Label text="BE Home for Desktop" class="desktop-title" />
+                <ui:Label text="Board installs, local APKs, and saved copies in one guided workspace." class="desktop-toolbar-copy" />
+            </ui:VisualElement>
+            <ui:VisualElement class="desktop-toolbar-actions">
+                <ui:Button name="open-settings-button" text="Settings" class="desktop-nav-button" />
+                <ui:Button name="open-about-button" text="About" class="desktop-nav-button" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+
+        <ui:ScrollView name="setup-view" class="desktop-view desktop-scroll">
+            <ui:VisualElement class="desktop-setup-shell">
+                <ui:VisualElement class="desktop-hero-band">
+                    <ui:Label text="Welcome" class="desktop-kicker" />
+                    <ui:Label text="Set up BE Home for Desktop" class="desktop-hero-title" />
+                    <ui:Label text="Setup gets BE Home ready to find games and apps on this computer and install them on Board without command-line steps." class="desktop-hero-copy" />
+                </ui:VisualElement>
+
+                <ui:VisualElement class="desktop-step-row">
+                    <ui:VisualElement class="desktop-step-item desktop-step-item-active">
+                        <ui:Label text="1" class="desktop-step-number" />
+                        <ui:VisualElement class="desktop-step-copy-wrap">
+                            <ui:Label text="Welcome" class="desktop-step-title" />
+                            <ui:Label text="Review how the desktop helper works." class="desktop-step-copy" />
+                        </ui:VisualElement>
+                    </ui:VisualElement>
+                    <ui:VisualElement class="desktop-step-item">
+                        <ui:Label text="2" class="desktop-step-number" />
+                        <ui:VisualElement class="desktop-step-copy-wrap">
+                            <ui:Label text="Board Install Tool" class="desktop-step-title" />
+                            <ui:Label text="Get Board's install helper ready." class="desktop-step-copy" />
+                        </ui:VisualElement>
+                    </ui:VisualElement>
+                    <ui:VisualElement class="desktop-step-item">
+                        <ui:Label text="3" class="desktop-step-number" />
+                        <ui:VisualElement class="desktop-step-copy-wrap">
+                            <ui:Label text="Look for Games &amp; Apps" class="desktop-step-title" />
+                            <ui:Label text="Choose where BE Home should scan." class="desktop-step-copy" />
+                        </ui:VisualElement>
+                    </ui:VisualElement>
+                    <ui:VisualElement class="desktop-step-item">
+                        <ui:Label text="4" class="desktop-step-number" />
+                        <ui:VisualElement class="desktop-step-copy-wrap">
+                            <ui:Label text="Library Location" class="desktop-step-title" />
+                            <ui:Label text="Pick where saved copies should live." class="desktop-step-copy" />
+                        </ui:VisualElement>
+                    </ui:VisualElement>
+                    <ui:VisualElement class="desktop-step-item desktop-step-item-final">
+                        <ui:Label text="5" class="desktop-step-number" />
+                        <ui:VisualElement class="desktop-step-copy-wrap">
+                            <ui:Label text="Ready to Go" class="desktop-step-title" />
+                            <ui:Label text="Start managing installs from one workspace." class="desktop-step-copy" />
+                        </ui:VisualElement>
+                    </ui:VisualElement>
+                </ui:VisualElement>
+
+                <ui:VisualElement class="desktop-setup-grid">
+                    <ui:VisualElement class="desktop-info-panel">
+                        <ui:Label text="Get the Board Install Tool ready." class="desktop-section-title" />
+                        <ui:Label text="BE Home needs Board's install helper so it can install games and apps on your Board for you." class="desktop-copy" />
+                        <ui:Label text="Board's formal name for this helper is Board Developer Bridge (bdb)." class="desktop-copy desktop-muted-copy" />
+                        <ui:VisualElement class="desktop-guidance-list">
+                            <ui:Label text="Keep Board connected by USB when you are ready to install." class="desktop-guidance-item" />
+                            <ui:Label text="Scan folders are optional. You can still choose any APK manually." class="desktop-guidance-item" />
+                            <ui:Label text="The saved library keeps reusable copies for reinstall and recovery later." class="desktop-guidance-item" />
+                        </ui:VisualElement>
+                    </ui:VisualElement>
+
+                    <ui:VisualElement class="desktop-form-panel">
+                        <ui:Label text="Choose setup locations" class="desktop-section-title" />
+                        <ui:Label text="Use the recommended folders or paste custom paths. You can change these later in Settings." class="desktop-copy desktop-muted-copy" />
+                        <ui:TextField name="bdb-path-field" label="Board Install Tool path" class="desktop-field" />
+                        <ui:TextField name="library-path-field" label="Saved library folder" class="desktop-field" />
+                        <ui:TextField name="scan-folders-field" label="Games and apps folders" multiline="true" class="desktop-field desktop-field-tall" />
+                        <ui:Button name="finish-setup-button" text="Finish Setup" class="desktop-primary-button desktop-wide-button" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+            </ui:VisualElement>
+        </ui:ScrollView>
+
+        <ui:ScrollView name="workspace-view" class="desktop-view desktop-scroll">
+            <ui:VisualElement class="desktop-workspace-shell">
+                <ui:VisualElement class="desktop-status-strip">
+                    <ui:Label name="board-status-label" text="Checking Board..." class="desktop-status-chip desktop-status-chip-neutral" />
+                    <ui:VisualElement class="desktop-value-chip">
+                        <ui:Label text="Board OS" class="desktop-value-label" />
+                        <ui:Label name="board-os-label" text="Unavailable" class="desktop-value-text" />
+                    </ui:VisualElement>
+                    <ui:VisualElement class="desktop-value-chip">
+                        <ui:Label text="Install helper" class="desktop-value-label" />
+                        <ui:Label text="Board Developer Bridge" class="desktop-value-text" />
+                    </ui:VisualElement>
+                    <ui:Button name="refresh-status-button" text="Refresh Board" class="desktop-secondary-button desktop-status-action" />
+                </ui:VisualElement>
+
+                <ui:VisualElement class="desktop-main-layout">
+                    <ui:VisualElement class="desktop-sidebar">
+                        <ui:VisualElement class="desktop-sidebar-section desktop-sidebar-section-active">
+                            <ui:Label text="Games &amp; Apps" class="desktop-sidebar-title" />
+                            <ui:Label text="Files on this computer and your saved library" class="desktop-sidebar-copy" />
+                        </ui:VisualElement>
+                        <ui:VisualElement class="desktop-sidebar-section">
+                            <ui:Label text="Installed on Board" class="desktop-sidebar-title" />
+                            <ui:Label text="What is already on your Board" class="desktop-sidebar-copy" />
+                        </ui:VisualElement>
+                    </ui:VisualElement>
+
+                    <ui:VisualElement class="desktop-content-stack">
+                        <ui:VisualElement class="desktop-section-header">
+                            <ui:VisualElement class="desktop-section-heading">
+                                <ui:Label text="Choose a game or app from this computer." class="desktop-heading" />
+                                <ui:Label text="BE Home can check your chosen folders, keep saved copies in one library, or let you pick a file manually whenever you want." class="desktop-copy desktop-muted-copy" />
+                            </ui:VisualElement>
+                            <ui:VisualElement class="desktop-action-row">
+                                <ui:Button name="choose-apk-button" text="Choose Game or App" class="desktop-primary-button" />
+                                <ui:Button name="rescan-button" text="Rescan" class="desktop-secondary-button" />
+                            </ui:VisualElement>
+                        </ui:VisualElement>
+
+                        <ui:VisualElement class="desktop-summary-row">
+                            <ui:VisualElement class="desktop-summary-chip">
+                                <ui:Label text="Folders" class="desktop-value-label" />
+                                <ui:Label text="Manual choice still available" class="desktop-value-text" />
+                            </ui:VisualElement>
+                            <ui:VisualElement class="desktop-summary-chip">
+                                <ui:Label text="Saved library" class="desktop-value-label" />
+                                <ui:Label text="Reusable copies for later" class="desktop-value-text" />
+                            </ui:VisualElement>
+                        </ui:VisualElement>
+
+                        <ui:VisualElement class="desktop-two-column">
+                            <ui:VisualElement class="desktop-content-panel">
+                                <ui:Label text="Folders BE Home can already see" class="desktop-section-title" />
+                                <ui:Label text="These are the strongest matches from your selected folders." class="desktop-copy desktop-muted-copy" />
+                                <ui:Label name="apk-list-label" text="No APKs found yet." class="desktop-list-label" />
+                                <ui:VisualElement class="desktop-panel-actions">
+                                    <ui:Button name="add-folder-button" text="Add Folder" class="desktop-secondary-button" />
+                                </ui:VisualElement>
+                            </ui:VisualElement>
+
+                            <ui:VisualElement class="desktop-content-panel desktop-manual-panel">
+                                <ui:Label text="Use any game or app file you already trust." class="desktop-section-title" />
+                                <ui:Label text="If you already know which file you want, choose it directly even when no scan folders are selected." class="desktop-copy desktop-muted-copy" />
+                                <ui:VisualElement class="desktop-empty-note">
+                                    <ui:Label text="No file chosen yet" class="desktop-empty-title" />
+                                    <ui:Label text="Choose a game or app to install it right away or save a copy for later." class="desktop-empty-copy" />
+                                </ui:VisualElement>
+                            </ui:VisualElement>
+                        </ui:VisualElement>
+
+                        <ui:VisualElement class="desktop-content-panel">
+                            <ui:Label text="Saved copies you can reuse later" class="desktop-section-title" />
+                            <ui:Label text="BE Home keeps saved copies here so reinstalling later takes fewer steps." class="desktop-copy desktop-muted-copy" />
+                            <ui:VisualElement class="desktop-empty-note">
+                                <ui:Label text="Your saved library is empty for now." class="desktop-empty-title" />
+                                <ui:Label text="Choose a game or app, then save a copy once BE Home can inspect it." class="desktop-empty-copy" />
+                            </ui:VisualElement>
+                        </ui:VisualElement>
+
+                        <ui:VisualElement class="desktop-content-panel">
+                            <ui:Label text="Installed on Board" class="desktop-section-title" />
+                            <ui:Label text="Open a game that is ready to launch, or remove something you no longer want on the device." class="desktop-copy desktop-muted-copy" />
+                            <ui:VisualElement class="desktop-empty-note">
+                                <ui:Label text="No installed titles loaded yet." class="desktop-empty-title" />
+                                <ui:Label text="Keep Board connected and use Refresh Board to check the device state." class="desktop-empty-copy" />
+                            </ui:VisualElement>
+                        </ui:VisualElement>
+                    </ui:VisualElement>
+                </ui:VisualElement>
+            </ui:VisualElement>
+        </ui:ScrollView>
+
+        <ui:ScrollView name="settings-view" class="desktop-view desktop-scroll">
+            <ui:VisualElement class="desktop-settings-shell">
+                <ui:VisualElement class="desktop-hero-band desktop-compact-hero">
+                    <ui:Label text="Settings" class="desktop-kicker" />
+                    <ui:Label text="Keep folders, Board checks, and install helper options in one easy place." class="desktop-hero-title" />
+                </ui:VisualElement>
+
+                <ui:VisualElement class="desktop-settings-grid">
+                    <ui:VisualElement class="desktop-form-panel">
+                        <ui:Label text="Locations" class="desktop-section-title" />
+                        <ui:Label text="BE Home checks these folders when you rescan this computer." class="desktop-copy desktop-muted-copy" />
+                        <ui:TextField name="settings-bdb-path-field" label="Board Install Tool path" class="desktop-field" />
+                        <ui:TextField name="settings-library-path-field" label="Saved library folder" class="desktop-field" />
+                        <ui:TextField name="settings-scan-folders-field" label="Games and apps folders" multiline="true" class="desktop-field desktop-field-tall" />
+                        <ui:Button name="close-settings-button" text="Save Settings" class="desktop-primary-button desktop-wide-button" />
+                    </ui:VisualElement>
+
+                    <ui:VisualElement class="desktop-info-panel">
+                        <ui:Label text="Board connection" class="desktop-section-title" />
+                        <ui:Label text="BE Home checks your Board while the workspace is open, then keeps local workflows available after setup." class="desktop-copy" />
+                        <ui:VisualElement class="desktop-guidance-list">
+                            <ui:Label text="Connection checks use the Board Install Tool." class="desktop-guidance-item" />
+                            <ui:Label text="Core local install flows do not require a Board Enthusiasts account." class="desktop-guidance-item" />
+                            <ui:Label text="After setup, local APK inventory and saved copies stay useful offline." class="desktop-guidance-item" />
+                        </ui:VisualElement>
+                    </ui:VisualElement>
+                </ui:VisualElement>
+            </ui:VisualElement>
+        </ui:ScrollView>
+
+        <ui:VisualElement name="about-modal" class="desktop-modal">
+            <ui:VisualElement class="desktop-modal-card">
+                <ui:Label text="BE Home for Desktop" class="desktop-heading" />
+                <ui:Label text="BE Home for Desktop helps players keep Board game and app installs in one guided desktop workspace instead of working through terminal steps by hand." class="desktop-copy desktop-muted-copy" />
+                <ui:Label text="Board's install helper is formally named Board Developer Bridge (bdb)." class="desktop-copy" />
+                <ui:Label text="The desktop app keeps Board checks, local game files, and saved library locations close by in one place." class="desktop-copy" />
+                <ui:Label text="Version 0.1.0" class="desktop-version-label" />
+                <ui:Button name="close-about-button" text="Close" class="desktop-primary-button desktop-wide-button" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+    </ui:VisualElement>
+</ui:UXML>
