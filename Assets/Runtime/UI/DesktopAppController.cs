@@ -13,10 +13,16 @@ namespace BE.Home.Desktop.UI
     /// </summary>
     internal sealed class DesktopAppController : MonoBehaviour
     {
+        private const string AppRootName = "app-root";
+        private const string DesktopStyleResourceName = "DesktopAppStyles";
+        private const string LegacyDesktopStyleResourceName = "DesktopApp";
+
         private readonly ApkDiscoveryService m_apkDiscoveryService = new();
         private readonly BdbProcessService m_bdbProcessService = new();
-        private readonly DesktopSettingsStore m_settingsStore = new();
         private readonly NativeFilePickerService m_filePickerService = new();
+        private UIDocument m_document;
+        private StyleSheet m_desktopStyleSheet;
+        private DesktopSettingsStore m_settingsStore;
         private DesktopSettingsData m_settings;
         private VisualElement m_root;
         private VisualElement m_setupView;
@@ -46,29 +52,90 @@ namespace BE.Home.Desktop.UI
 
         private void Awake()
         {
+            m_settingsStore = new DesktopSettingsStore(Application.persistentDataPath);
             m_settings = m_settingsStore.Load();
-            UIDocument document = gameObject.AddComponent<UIDocument>();
+            m_document = gameObject.AddComponent<UIDocument>();
+            m_desktopStyleSheet = Resources.Load<StyleSheet>(DesktopStyleResourceName)
+                ?? Resources.Load<StyleSheet>(LegacyDesktopStyleResourceName);
+            if (m_desktopStyleSheet == null)
+            {
+                Debug.LogError($"Unable to load required UI Toolkit stylesheet resource '{DesktopStyleResourceName}'.");
+            }
+
             PanelSettings panelSettings = ScriptableObject.CreateInstance<PanelSettings>();
+            panelSettings.themeStyleSheet = Resources.Load<ThemeStyleSheet>("UnityDefaultRuntimeTheme");
             panelSettings.scaleMode = PanelScaleMode.ScaleWithScreenSize;
             panelSettings.referenceResolution = new Vector2Int(1440, 960);
             panelSettings.clearColor = true;
-            document.panelSettings = panelSettings;
-            document.visualTreeAsset = Resources.Load<VisualTreeAsset>("DesktopApp");
+            panelSettings.colorClearValue = Color.black;
+            m_document.panelSettings = panelSettings;
+            m_document.visualTreeAsset = Resources.Load<VisualTreeAsset>("DesktopApp");
+        }
+
+        private void Start()
+        {
+            EnsureRenderCamera();
+            InitializeUi();
         }
 
         private void OnEnable()
         {
-            m_root = GetComponent<UIDocument>().rootVisualElement;
-            BeSharedStyleLoader.ApplyTo(m_root);
-            StyleSheet styleSheet = Resources.Load<StyleSheet>("DesktopApp");
-            if (styleSheet != null)
+            if (m_document != null && m_root != null)
             {
-                m_root.styleSheets.Add(styleSheet);
+                ApplyRuntimeStyleSheets(m_document.rootVisualElement, m_desktopStyleSheet);
             }
+        }
+
+        private void InitializeUi()
+        {
+            m_root = m_document.rootVisualElement;
+            ApplyRuntimeStyleSheets(m_root, m_desktopStyleSheet);
 
             BindElements();
             BindActions();
             RenderCurrentRoute();
+            m_root.schedule.Execute(() => ApplyRuntimeStyleSheets(m_document.rootVisualElement, m_desktopStyleSheet));
+        }
+
+        /// <summary>
+        /// Applies shared and desktop stylesheets to the live UI Toolkit document tree.
+        /// </summary>
+        /// <param name="documentRoot">The root visual element owned by the active <see cref="UIDocument" />.</param>
+        /// <param name="desktopStyleSheet">The desktop app style sheet loaded from runtime resources.</param>
+        /// <returns><see langword="true" /> when the desktop app style sheet was applied.</returns>
+        internal static bool ApplyRuntimeStyleSheets(VisualElement documentRoot, StyleSheet desktopStyleSheet)
+        {
+            if (documentRoot == null)
+            {
+                return false;
+            }
+
+            VisualElement appRoot = documentRoot.Q<VisualElement>(AppRootName) ?? documentRoot;
+            BeSharedStyleLoader.ApplyTo(documentRoot);
+            BeSharedStyleLoader.ApplyTo(appRoot);
+
+            bool applied = AddStyleSheet(documentRoot, desktopStyleSheet);
+            if (appRoot != documentRoot)
+            {
+                applied |= AddStyleSheet(appRoot, desktopStyleSheet);
+            }
+
+            return applied;
+        }
+
+        private static bool AddStyleSheet(VisualElement element, StyleSheet styleSheet)
+        {
+            if (element == null || styleSheet == null)
+            {
+                return false;
+            }
+
+            if (!element.styleSheets.Contains(styleSheet))
+            {
+                element.styleSheets.Add(styleSheet);
+            }
+
+            return true;
         }
 
         private void BindElements()
@@ -218,6 +285,28 @@ namespace BE.Home.Desktop.UI
             m_settingsBdbPathField.value = m_settings.bdbPath;
             m_settingsLibraryPathField.value = m_settings.libraryPath;
             m_settingsScanFoldersField.value = folders;
+        }
+
+        /// <summary>
+        /// Ensures an empty scene still has a camera for Game View presentation.
+        /// </summary>
+        /// <returns>The existing camera, or the fallback camera created for the desktop app.</returns>
+        internal static Camera EnsureRenderCamera()
+        {
+            Camera existingCamera = FindAnyObjectByType<Camera>(FindObjectsInactive.Exclude);
+            if (existingCamera != null)
+            {
+                return existingCamera;
+            }
+
+            GameObject cameraHost = new("BE Home for Desktop Camera");
+            DontDestroyOnLoad(cameraHost);
+            Camera renderCamera = cameraHost.AddComponent<Camera>();
+            renderCamera.clearFlags = CameraClearFlags.SolidColor;
+            renderCamera.backgroundColor = Color.black;
+            renderCamera.cullingMask = 0;
+            renderCamera.orthographic = true;
+            return renderCamera;
         }
     }
 }

@@ -1,7 +1,8 @@
 {
   "dependencies": {
     "com.be.unity.shared": "file:../../unity-shared",
-    "com.unity.test-framework": "1.5.1",
+    "com.unity.inputsystem": "1.19.0",
+    "com.unity.test-framework": "1.6.0",
     "com.unity.modules.accessibility": "1.0.0",
     "com.unity.modules.audio": "1.0.0",
     "com.unity.modules.imageconversion": "1.0.0",

@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using BE.Home.Desktop.Domain;
 using BE.Home.Desktop.Services;
@@ -42,6 +43,15 @@ namespace BE.Home.Desktop.Tests
             DesktopSettingsData loaded = store.Load();
             Assert.IsTrue(loaded.setupCompleted);
             Assert.AreEqual("C:/tools/bdb.exe", loaded.bdbPath);
+        }
+
+        /// <summary>
+        /// Verifies a settings store cannot be created without an explicit directory.
+        /// </summary>
+        [Test]
+        public void ConstructorRequiresSettingsDirectory()
+        {
+            Assert.Throws<ArgumentException>(() => new DesktopSettingsStore(string.Empty));
         }
 
         private static string CreateTempDirectory()

@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using BE.Home.Desktop.Domain;
 using UnityEngine;
@@ -5,7 +6,7 @@ using UnityEngine;
 namespace BE.Home.Desktop.Services
 {
     /// <summary>
-    /// Loads and saves desktop settings in Unity's persistent data path.
+    /// Loads and saves desktop settings in the configured settings directory.
     /// </summary>
     internal sealed class DesktopSettingsStore
     {
@@ -15,12 +16,15 @@ namespace BE.Home.Desktop.Services
         /// <summary>
         /// Initializes a new settings store.
         /// </summary>
-        /// <param name="settingsDirectory">Optional settings directory override for tests.</param>
-        public DesktopSettingsStore(string settingsDirectory = null)
+        /// <param name="settingsDirectory">The directory that contains desktop settings.</param>
+        public DesktopSettingsStore(string settingsDirectory)
         {
-            m_settingsDirectory = string.IsNullOrWhiteSpace(settingsDirectory)
-                ? Application.persistentDataPath
-                : settingsDirectory;
+            if (string.IsNullOrWhiteSpace(settingsDirectory))
+            {
+                throw new ArgumentException("A settings directory is required.", nameof(settingsDirectory));
+            }
+
+            m_settingsDirectory = settingsDirectory;
         }
 
         /// <summary>
